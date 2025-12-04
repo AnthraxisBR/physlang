@@ -16,8 +16,12 @@ pub fn execute_functions(
     let mut diagnostics = Vec::new();
 
     // Clone what we need before taking mutable borrows
-    let functions: Vec<FunctionDecl> = program.functions.clone();
-    let top_level_calls = std::mem::take(&mut program.top_level_calls);
+    // Use a block to ensure the borrow of program.functions ends
+    let (functions, top_level_calls) = {
+        let functions = program.functions.clone();
+        let calls = std::mem::take(&mut program.top_level_calls);
+        (functions, calls)
+    };
     
     // Build function map from cloned functions
     let function_map: HashMap<String, &FunctionDecl> = functions
