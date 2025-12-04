@@ -26,6 +26,13 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    // v0.8: Comparison operators for control flow
+    GreaterThan,
+    LessThan,
+    GreaterEqual,
+    LessEqual,
+    Equal,
+    NotEqual,
 }
 
 /// Built-in function names
@@ -77,6 +84,25 @@ pub enum Stmt {
     DetectorDecl(DetectorDecl),
     /// Return statement: `return expr;`
     Return(Expr),
+    // v0.8: Language-level control flow
+    /// If statement: `if condition { then } else { else }`
+    If {
+        condition: Expr,
+        then_branch: Vec<Stmt>,
+        else_branch: Vec<Stmt>, // empty vec if no else
+    },
+    /// For loop: `for var in start..end { body }`
+    For {
+        var_name: String,
+        start: Expr,  // inclusive
+        end: Expr,    // exclusive (0..n style)
+        body: Vec<Stmt>,
+    },
+    /// Match statement: `match expr { arms }`
+    Match {
+        scrutinee: Expr,
+        arms: Vec<MatchArm>,
+    },
 }
 
 /// A PhysLang program AST
@@ -135,6 +161,26 @@ pub struct DetectorDecl {
 pub enum DetectorKind {
     Position(String), // particle name
     Distance { a: String, b: String },
+}
+
+// ============================================================================
+// v0.8: Language-Level Control Flow
+// ============================================================================
+
+/// Match pattern for match statements
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    /// Integer literal pattern
+    Literal(i64),
+    /// Wildcard pattern "_"
+    Wildcard,
+}
+
+/// Match arm: pattern => body
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Vec<Stmt>,
 }
 
 // ============================================================================

@@ -1,7 +1,7 @@
 use crate::ast::{
     BinaryOp, ConditionExpr, DetectorDecl, DetectorKind, Expr, ForceDecl, ForceKind, FuncName,
-    FunctionDecl, LetDecl, LoopBodyStmt, LoopDecl, LoopKind, ObservableExpr, ParticleDecl,
-    Program, SimulateDecl, Stmt, WellDecl,
+    FunctionDecl, LetDecl, LoopBodyStmt, LoopDecl, LoopKind, MatchArm, MatchPattern,
+    ObservableExpr, ParticleDecl, Program, SimulateDecl, Stmt, WellDecl,
 };
 use crate::diagnostics::Span;
 use thiserror::Error;
@@ -134,6 +134,21 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
         } else if line.starts_with("well ") {
             wells.push(parse_well(line, Some(line_span))?);
             i += 1;
+        } else if line.starts_with("if ") {
+            // v0.8: Top-level if statement
+            let (stmt, next_line) = parse_if_stmt(&lines, i, &ctx)?;
+            top_level_calls.push(stmt);
+            i = next_line;
+        } else if line.starts_with("for ") {
+            // v0.8: Top-level for loop
+            let (stmt, next_line) = parse_for_stmt(&lines, i, &ctx)?;
+            top_level_calls.push(stmt);
+            i = next_line;
+        } else if line.starts_with("match ") {
+            // v0.8: Top-level match statement
+            let (stmt, next_line) = parse_match_stmt(&lines, i, &ctx)?;
+            top_level_calls.push(stmt);
+            i = next_line;
         } else {
             // Try parsing as function call statement
             if let Some(paren_pos) = line.find('(') {
@@ -812,7 +827,83 @@ fn parse_let(line: &str, span: Option<Span>) -> Result<LetDecl, ParseError> {
 /// Parse an expression from a string
 /// Grammar: ExprAdd (with precedence: add/sub < mul/div < unary < primary)
 fn parse_expr(s: &str, span: Option<Span>) -> Result<Expr, ParseError> {
-    parse_expr_add(s.trim(), span)
+    parse_expr_comparison(s.trim(), span)
+}
+
+/// Parse comparison operators (lowest precedence)
+/// Supports: ==, !=, <, >, <=, >=
+fn parse_expr_comparison(s: &str, span: Option<Span>) -> Result<Expr, ParseError> {
+    let s = s.trim();
+    
+    // Find comparison operators at paren depth 0
+    // Check for two-character operators first (==, !=, <=, >=), then single-character
+    let operators = [
+        ("==", BinaryOp::Equal),
+        ("!=", BinaryOp::NotEqual),
+        ("<=", BinaryOp::LessEqual),
+        (">=", BinaryOp::GreaterEqual),
+        ("<", BinaryOp::LessThan),
+        (">", BinaryOp::GreaterThan),
+    ];
+    
+    let mut paren_depth = 0;
+    let mut op_pos = None;
+    let mut op = None;
+    
+    // Search from right to left for the rightmost comparison operator
+    for (i, ch) in s.char_indices().rev() {
+        match ch {
+            ')' => paren_depth += 1,
+            '(' => paren_depth -= 1,
+            _ => {}
+        }
+        
+        if paren_depth == 0 {
+            // Check for two-character operators
+            if i + 1 < s.len() {
+                let two_char = &s[i..i + 2];
+                for (op_str, op_type) in &operators[..4] {
+                    if two_char == *op_str {
+                        op_pos = Some(i);
+                        op = Some(*op_type);
+                        break;
+                    }
+                }
+            }
+            
+            // Check for single-character operators if no two-char found
+            if op_pos.is_none() {
+                for (op_str, op_type) in &operators[4..] {
+                    if s[i..].starts_with(*op_str) {
+                        op_pos = Some(i);
+                        op = Some(*op_type);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if op_pos.is_some() {
+            break;
+        }
+    }
+    
+    if let (Some(pos), Some(op_type)) = (op_pos, op) {
+        let op_len = match op_type {
+            BinaryOp::Equal | BinaryOp::NotEqual | BinaryOp::LessEqual | BinaryOp::GreaterEqual => 2,
+            _ => 1,
+        };
+        let left_str = s[..pos].trim();
+        let right_str = s[pos + op_len..].trim();
+        
+        Ok(Expr::Binary {
+            op: op_type,
+            left: Box::new(parse_expr_comparison(left_str, span)?),
+            right: Box::new(parse_expr_add(right_str, span)?),
+        })
+    } else {
+        parse_expr_add(s, span)
+    }
 }
 
 /// Parse addition/subtraction (lowest precedence)
@@ -1201,6 +1292,261 @@ fn parse_block(
     Ok((stmts, i))
 }
 
+/// Parse an if statement: `if condition { then } else { else }`
+fn parse_if_stmt(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(Stmt, usize), ParseError> {
+    let line = lines[start_idx].trim();
+    let line_span = ctx.full_line_span(start_idx);
+    
+    // Parse: if condition {
+    if !line.starts_with("if ") {
+        return Err(ParseError::new("Expected 'if' keyword", Some(line_span)));
+    }
+    
+    // Find the opening brace
+    let brace_pos = line.find('{').ok_or_else(|| {
+        ParseError::new("Expected '{' after if condition", Some(line_span))
+    })?;
+    
+    let condition_str = line[3..brace_pos].trim();
+    let condition = parse_expr(condition_str, Some(line_span))?;
+    
+    // Parse then branch (block starting at brace_pos)
+    let then_start = if line[brace_pos + 1..].trim().is_empty() {
+        start_idx + 1
+    } else {
+        start_idx
+    };
+    
+    let (then_branch, after_then) = parse_block(lines, then_start, ctx)?;
+    
+    // Check for else
+    let mut else_branch = Vec::new();
+    let mut next_line = after_then;
+    
+    if after_then < lines.len() {
+        let else_line = lines[after_then].trim();
+        if else_line.starts_with("else") {
+            if else_line == "else" || else_line == "else {" {
+                // Parse else block
+                let else_start = if else_line == "else" {
+                    after_then + 1
+                } else {
+                    after_then
+                };
+                let (else_body, after_else) = parse_block(lines, else_start, ctx)?;
+                else_branch = else_body;
+                next_line = after_else;
+            } else {
+                // else with condition on same line (not supported in v0.8)
+                return Err(ParseError::new(
+                    "else if not supported in v0.8",
+                    Some(ctx.full_line_span(after_then)),
+                ));
+            }
+        }
+    }
+    
+    Ok((
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        },
+        next_line,
+    ))
+}
+
+/// Parse a for statement: `for var in start..end { body }`
+fn parse_for_stmt(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(Stmt, usize), ParseError> {
+    let line = lines[start_idx].trim();
+    let line_span = ctx.full_line_span(start_idx);
+    
+    // Parse: for var in start..end {
+    if !line.starts_with("for ") {
+        return Err(ParseError::new("Expected 'for' keyword", Some(line_span)));
+    }
+    
+    let after_for = &line[4..];
+    
+    // Find " in "
+    let in_pos = after_for.find(" in ").ok_or_else(|| {
+        ParseError::new("Expected ' in ' after for variable", Some(line_span))
+    })?;
+    
+    let var_name = after_for[..in_pos].trim();
+    if !is_valid_identifier(var_name) {
+        return Err(ParseError::new(
+            format!("Invalid variable name in for loop: {}", var_name),
+            Some(line_span),
+        ));
+    }
+    
+    let after_in = &after_for[in_pos + 4..];
+    
+    // Find ".."
+    let dotdot_pos = after_in.find("..").ok_or_else(|| {
+        ParseError::new("Expected '..' in for loop range", Some(line_span))
+    })?;
+    
+    let start_str = after_in[..dotdot_pos].trim();
+    let after_dotdot = &after_in[dotdot_pos + 2..];
+    
+    // Find opening brace
+    let brace_pos = after_dotdot.find('{').ok_or_else(|| {
+        ParseError::new("Expected '{' after for loop range", Some(line_span))
+    })?;
+    
+    let end_str = after_dotdot[..brace_pos].trim();
+    
+    let start = parse_expr(start_str, Some(line_span))?;
+    let end = parse_expr(end_str, Some(line_span))?;
+    
+    // Parse body block
+    let body_start = if after_dotdot[brace_pos + 1..].trim().is_empty() {
+        start_idx + 1
+    } else {
+        start_idx
+    };
+    
+    let (body, next_line) = parse_block(lines, body_start, ctx)?;
+    
+    Ok((
+        Stmt::For {
+            var_name: var_name.to_string(),
+            start,
+            end,
+            body,
+        },
+        next_line,
+    ))
+}
+
+/// Parse a match statement: `match expr { arms }`
+fn parse_match_stmt(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(Stmt, usize), ParseError> {
+    let line = lines[start_idx].trim();
+    let line_span = ctx.full_line_span(start_idx);
+    
+    // Parse: match expr {
+    if !line.starts_with("match ") {
+        return Err(ParseError::new("Expected 'match' keyword", Some(line_span)));
+    }
+    
+    let after_match = &line[6..];
+    
+    // Find opening brace
+    let brace_pos = after_match.find('{').ok_or_else(|| {
+        ParseError::new("Expected '{' after match expression", Some(line_span))
+    })?;
+    
+    let scrutinee_str = after_match[..brace_pos].trim();
+    let scrutinee = parse_expr(scrutinee_str, Some(line_span))?;
+    
+    // Parse match arms
+    let mut arms = Vec::new();
+    let mut i = if after_match[brace_pos + 1..].trim().is_empty() {
+        start_idx + 1
+    } else {
+        start_idx
+    };
+    
+    // Find the closing brace of the match
+    let mut brace_count = 1;
+    let match_start = i;
+    
+    while i < lines.len() && brace_count > 0 {
+        let arm_line = lines[i].trim();
+        
+        if arm_line.is_empty() || arm_line.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        
+        if arm_line == "}" {
+            brace_count -= 1;
+            if brace_count == 0 {
+                i += 1;
+                break;
+            }
+            i += 1;
+            continue;
+        }
+        
+        if arm_line.ends_with('{') {
+            brace_count += 1;
+        }
+        
+        // Parse arm: pattern => { body }
+        if arm_line.contains("=>") {
+            let arrow_pos = arm_line.find("=>").unwrap();
+            let pattern_str = arm_line[..arrow_pos].trim();
+            let after_arrow = arm_line[arrow_pos + 2..].trim();
+            
+            // Parse pattern
+            let pattern = if pattern_str == "_" {
+                MatchPattern::Wildcard
+            } else {
+                // Try parsing as integer literal
+                let int_val = pattern_str.parse::<i64>().map_err(|_| {
+                    ParseError::new(
+                        format!("Match pattern must be integer literal or '_': {}", pattern_str),
+                        Some(ctx.full_line_span(i)),
+                    )
+                })?;
+                MatchPattern::Literal(int_val)
+            };
+            
+            // Parse body block
+            let body_start = if after_arrow == "{" || after_arrow.is_empty() {
+                if after_arrow == "{" {
+                    i
+                } else {
+                    i + 1
+                }
+            } else {
+                // Body starts on same line after =>
+                return Err(ParseError::new(
+                    "Match arm body must start on new line",
+                    Some(ctx.full_line_span(i)),
+                ));
+            };
+            
+            let (body, after_body) = parse_block(lines, body_start, ctx)?;
+            
+            arms.push(MatchArm { pattern, body });
+            i = after_body;
+        } else {
+            i += 1;
+        }
+    }
+    
+    if brace_count > 0 {
+        return Err(ParseError::new(
+            "Unclosed match statement",
+            Some(ctx.full_line_span(match_start)),
+        ));
+    }
+    
+    Ok((
+        Stmt::Match {
+            scrutinee,
+            arms,
+        },
+        i,
+    ))
+}
+
 /// Parse a statement
 fn parse_stmt(
     lines: &[&str],
@@ -1213,7 +1559,14 @@ fn parse_stmt(
     // Remove semicolon if present (for return statements)
     let line_no_semi = line.strip_suffix(';').unwrap_or(line).trim();
     
-    if line_no_semi.starts_with("let ") {
+    // v0.8: Parse control flow statements
+    if line_no_semi.starts_with("if ") {
+        return parse_if_stmt(lines, start_idx, ctx);
+    } else if line_no_semi.starts_with("for ") {
+        return parse_for_stmt(lines, start_idx, ctx);
+    } else if line_no_semi.starts_with("match ") {
+        return parse_match_stmt(lines, start_idx, ctx);
+    } else if line_no_semi.starts_with("let ") {
         let let_decl = parse_let(line_no_semi, Some(line_span))?;
         Ok((
             Stmt::Let {

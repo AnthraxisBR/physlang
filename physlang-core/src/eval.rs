@@ -53,6 +53,16 @@ impl<'a> FunctionEvalContext<'a> {
             .or_else(|| self.global.values.get(name))
             .copied()
     }
+    
+    /// Clone this context to create a new scope (v0.8: for control flow)
+    /// The new scope shares the same global context, params, and inherits local_lets
+    pub fn clone_scope(&self) -> Self {
+        Self {
+            global: self.global,
+            params: self.params.clone(),
+            local_lets: self.local_lets.clone(),
+        }
+    }
 }
 
 /// Evaluation error
@@ -165,6 +175,13 @@ pub fn eval_expr_with_function_ctx(
                     }
                     Ok(left_val / right_val)
                 }
+                // v0.8: Comparison operators (return 1.0 for true, 0.0 for false)
+                BinaryOp::GreaterThan => Ok(if left_val > right_val { 1.0 } else { 0.0 }),
+                BinaryOp::LessThan => Ok(if left_val < right_val { 1.0 } else { 0.0 }),
+                BinaryOp::GreaterEqual => Ok(if left_val >= right_val { 1.0 } else { 0.0 }),
+                BinaryOp::LessEqual => Ok(if left_val <= right_val { 1.0 } else { 0.0 }),
+                BinaryOp::Equal => Ok(if left_val == right_val { 1.0 } else { 0.0 }),
+                BinaryOp::NotEqual => Ok(if left_val != right_val { 1.0 } else { 0.0 }),
             }
         }
         

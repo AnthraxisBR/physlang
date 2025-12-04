@@ -73,31 +73,39 @@ pub fn analyze_program(program: &Program) -> Diagnostics {
         .map(|func| (func.name.clone(), func))
         .collect();
     
-    // Check top-level function calls
-    for call in &program.top_level_calls {
-        if let Stmt::ExprCall { name, args } = call {
-            if let Some(func) = function_map.get(name) {
-                if args.len() != func.params.len() {
+    // Check top-level statements (function calls and control flow)
+    let mut top_level_lets = HashMap::new();
+    for stmt in &program.top_level_calls {
+        match stmt {
+            Stmt::ExprCall { name, args } => {
+                if let Some(func) = function_map.get(name) {
+                    if args.len() != func.params.len() {
+                        diagnostics.push(Diagnostic::error(
+                            format!(
+                                "function '{}' expects {} argument(s), got {}",
+                                name,
+                                func.params.len(),
+                                args.len()
+                            ),
+                            None,
+                        ));
+                    }
+                    // Check argument expressions
+                    for arg in args {
+                        let expr_diagnostics = check_expr(arg, &env_lets);
+                        diagnostics.extend(expr_diagnostics.into());
+                    }
+                } else {
                     diagnostics.push(Diagnostic::error(
-                        format!(
-                            "function '{}' expects {} argument(s), got {}",
-                            name,
-                            func.params.len(),
-                            args.len()
-                        ),
+                        format!("unknown function '{}'", name),
                         None,
                     ));
                 }
-                // Check argument expressions
-                for arg in args {
-                    let expr_diagnostics = check_expr(arg, &env_lets);
-                    diagnostics.extend(expr_diagnostics.into());
-                }
-            } else {
-                diagnostics.push(Diagnostic::error(
-                    format!("unknown function '{}'", name),
-                    None,
-                ));
+            }
+            // v0.8: Check top-level control flow statements
+            _ => {
+                let stmt_diagnostics = check_stmt(stmt, &function_map, &mut top_level_lets);
+                diagnostics.extend(stmt_diagnostics.into());
             }
         }
     }
@@ -415,115 +423,216 @@ fn check_function_body(
         .map(|f| (f.name.clone(), f))
         .collect();
     
-    // Track local let bindings
+    // Track local let bindings (empty for now, as we don't track params/lets in analyzer)
     let mut local_lets = HashMap::new();
     
+    // Check all statements recursively
     for stmt in &func.body {
-        match stmt {
-            Stmt::Let { name, expr } => {
-                // Check expression (can reference params and previous local lets)
-                // For now, just check the expression structure
-                let expr_diagnostics = check_expr(expr, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
-                
-                local_lets.insert(name.clone(), ());
+        let stmt_diagnostics = check_stmt(stmt, &function_map, &mut local_lets);
+        diagnostics.extend(stmt_diagnostics.into());
+    }
+    
+    diagnostics
+}
+
+/// Check a statement recursively (v0.8: supports control flow)
+fn check_stmt(
+    stmt: &Stmt,
+    function_map: &HashMap<String, &FunctionDecl>,
+    local_lets: &mut HashMap<String, ()>,
+) -> Diagnostics {
+    let mut diagnostics = Diagnostics::new();
+    
+    match stmt {
+        Stmt::Let { name, expr } => {
+            // Check for duplicate local variable names
+            if local_lets.contains_key(name) {
+                diagnostics.push(Diagnostic::error(
+                    format!("duplicate local variable '{}'", name),
+                    None,
+                ));
             }
-            Stmt::ExprCall { name, args } => {
-                if let Some(called_func) = function_map.get(name) {
-                    if args.len() != called_func.params.len() {
-                        diagnostics.push(Diagnostic::error(
-                            format!(
-                                "function '{}' expects {} argument(s), got {}",
-                                name,
-                                called_func.params.len(),
-                                args.len()
-                            ),
-                            None,
-                        ));
-                    }
-                    // Check argument expressions
-                    for arg in args {
-                        let expr_diagnostics = check_expr(arg, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                    }
-                } else {
+            
+            // Check expression (can reference params and previous local lets)
+            let expr_diagnostics = check_expr(expr, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            
+            local_lets.insert(name.clone(), ());
+        }
+        Stmt::ExprCall { name, args } => {
+            if let Some(called_func) = function_map.get(name) {
+                if args.len() != called_func.params.len() {
                     diagnostics.push(Diagnostic::error(
-                        format!("unknown function '{}'", name),
+                        format!(
+                            "function '{}' expects {} argument(s), got {}",
+                            name,
+                            called_func.params.len(),
+                            args.len()
+                        ),
                         None,
                     ));
                 }
+                // Check argument expressions
+                for arg in args {
+                    let expr_diagnostics = check_expr(arg, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                }
+            } else {
+                diagnostics.push(Diagnostic::error(
+                    format!("unknown function '{}'", name),
+                    None,
+                ));
             }
-            Stmt::Return(expr) => {
-                // Check return expression
-                let expr_diagnostics = check_expr(expr, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
-            }
-            Stmt::ParticleDecl(particle) => {
-                // Check particle expressions
-                let expr_diagnostics = check_expr(&particle.position.0, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
-                let expr_diagnostics = check_expr(&particle.position.1, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
-                let expr_diagnostics = check_expr(&particle.mass, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
-            }
-            Stmt::ForceDecl(force) => {
-                match &force.kind {
-                    crate::ast::ForceKind::Gravity { g } => {
-                        let expr_diagnostics = check_expr(g, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                    }
-                    crate::ast::ForceKind::Spring { k, rest } => {
-                        let expr_diagnostics = check_expr(k, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                        let expr_diagnostics = check_expr(rest, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                    }
+        }
+        Stmt::Return(expr) => {
+            // Check return expression
+            let expr_diagnostics = check_expr(expr, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+        }
+        Stmt::ParticleDecl(particle) => {
+            // Check particle expressions
+            let expr_diagnostics = check_expr(&particle.position.0, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            let expr_diagnostics = check_expr(&particle.position.1, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            let expr_diagnostics = check_expr(&particle.mass, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+        }
+        Stmt::ForceDecl(force) => {
+            match &force.kind {
+                crate::ast::ForceKind::Gravity { g } => {
+                    let expr_diagnostics = check_expr(g, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                }
+                crate::ast::ForceKind::Spring { k, rest } => {
+                    let expr_diagnostics = check_expr(k, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                    let expr_diagnostics = check_expr(rest, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
                 }
             }
-            Stmt::LoopDecl(loop_decl) => {
-                match &loop_decl.kind {
-                    crate::ast::LoopKind::ForCycles {
-                        cycles,
-                        frequency,
-                        damping,
-                        ..
-                    } => {
-                        let expr_diagnostics = check_expr(cycles, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                        let expr_diagnostics = check_expr(frequency, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                        let expr_diagnostics = check_expr(damping, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                    }
-                    crate::ast::LoopKind::WhileCondition {
-                        condition,
-                        frequency,
-                        damping,
-                        ..
-                    } => {
-                        let expr_diagnostics = check_expr(frequency, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                        let expr_diagnostics = check_expr(damping, &HashMap::new());
-                        diagnostics.extend(expr_diagnostics.into());
-                        match condition {
-                            ConditionExpr::LessThan(_, threshold)
-                            | ConditionExpr::GreaterThan(_, threshold) => {
-                                let expr_diagnostics = check_expr(threshold, &HashMap::new());
-                                diagnostics.extend(expr_diagnostics.into());
-                            }
+        }
+        Stmt::LoopDecl(loop_decl) => {
+            match &loop_decl.kind {
+                crate::ast::LoopKind::ForCycles {
+                    cycles,
+                    frequency,
+                    damping,
+                    ..
+                } => {
+                    let expr_diagnostics = check_expr(cycles, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                    let expr_diagnostics = check_expr(frequency, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                    let expr_diagnostics = check_expr(damping, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                }
+                crate::ast::LoopKind::WhileCondition {
+                    condition,
+                    frequency,
+                    damping,
+                    ..
+                } => {
+                    let expr_diagnostics = check_expr(frequency, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                    let expr_diagnostics = check_expr(damping, &HashMap::new());
+                    diagnostics.extend(expr_diagnostics.into());
+                    match condition {
+                        ConditionExpr::LessThan(_, threshold)
+                        | ConditionExpr::GreaterThan(_, threshold) => {
+                            let expr_diagnostics = check_expr(threshold, &HashMap::new());
+                            diagnostics.extend(expr_diagnostics.into());
                         }
                     }
                 }
             }
-            Stmt::WellDecl(well) => {
-                let expr_diagnostics = check_expr(&well.threshold, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
-                let expr_diagnostics = check_expr(&well.depth, &HashMap::new());
-                diagnostics.extend(expr_diagnostics.into());
+        }
+        Stmt::WellDecl(well) => {
+            let expr_diagnostics = check_expr(&well.threshold, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            let expr_diagnostics = check_expr(&well.depth, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+        }
+        Stmt::DetectorDecl(_) => {
+            // Detectors don't have expressions to check
+        }
+        // v0.8: Control flow statements
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            // Check condition expression
+            let expr_diagnostics = check_expr(condition, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            
+            // Check then branch in new scope
+            let mut then_lets = local_lets.clone();
+            for stmt in then_branch {
+                let stmt_diagnostics = check_stmt(stmt, function_map, &mut then_lets);
+                diagnostics.extend(stmt_diagnostics.into());
             }
-            Stmt::DetectorDecl(_) => {
-                // Detectors don't have expressions to check
+            
+            // Check else branch in new scope
+            let mut else_lets = local_lets.clone();
+            for stmt in else_branch {
+                let stmt_diagnostics = check_stmt(stmt, function_map, &mut else_lets);
+                diagnostics.extend(stmt_diagnostics.into());
+            }
+        }
+        Stmt::For {
+            var_name,
+            start,
+            end,
+            body,
+        } => {
+            // Check start and end expressions
+            let expr_diagnostics = check_expr(start, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            let expr_diagnostics = check_expr(end, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            
+            // Check body in new scope with loop variable
+            let mut body_lets = local_lets.clone();
+            body_lets.insert(var_name.clone(), ()); // Loop variable is available in body
+            
+            for stmt in body {
+                let stmt_diagnostics = check_stmt(stmt, function_map, &mut body_lets);
+                diagnostics.extend(stmt_diagnostics.into());
+            }
+        }
+        Stmt::Match { scrutinee, arms } => {
+            // Check scrutinee expression
+            let expr_diagnostics = check_expr(scrutinee, &HashMap::new());
+            diagnostics.extend(expr_diagnostics.into());
+            
+            // Check arms
+            let mut wildcard_count = 0;
+            for arm in arms {
+                // Validate pattern
+                match &arm.pattern {
+                    crate::ast::MatchPattern::Literal(_) => {
+                        // Integer literal is valid
+                    }
+                    crate::ast::MatchPattern::Wildcard => {
+                        wildcard_count += 1;
+                    }
+                }
+                
+                // Check body in new scope
+                let mut arm_lets = local_lets.clone();
+                for stmt in &arm.body {
+                    let stmt_diagnostics = check_stmt(stmt, function_map, &mut arm_lets);
+                    diagnostics.extend(stmt_diagnostics.into());
+                }
+            }
+            
+            // At most one wildcard arm
+            if wildcard_count > 1 {
+                diagnostics.push(Diagnostic::error(
+                    "match statement can have at most one wildcard arm",
+                    None,
+                ));
             }
         }
     }

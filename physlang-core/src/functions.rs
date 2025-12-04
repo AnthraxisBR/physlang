@@ -29,16 +29,32 @@ pub fn execute_functions(
         .map(|f| (f.name.clone(), f))
         .collect();
 
-    // Execute top-level function calls
-    for call in top_level_calls {
-        if let Stmt::ExprCall { name, args } = call {
-            match execute_function_call(&name, &args, &function_map, eval_ctx, program, None) {
-                Ok(()) => {}
-                Err(e) => {
-                    diagnostics.push(Diagnostic::error(
-                        format!("Error executing function '{}': {}", name, e),
-                        None,
-                    ));
+    // Execute top-level statements (function calls and control flow)
+    for stmt in top_level_calls {
+        match stmt {
+            Stmt::ExprCall { name, args } => {
+                match execute_function_call(&name, &args, &function_map, eval_ctx, program, None) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        diagnostics.push(Diagnostic::error(
+                            format!("Error executing function '{}': {}", name, e),
+                            None,
+                        ));
+                    }
+                }
+            }
+            // v0.8: Execute top-level control flow statements
+            _ => {
+                // Create a minimal function context for top-level execution
+                let mut top_ctx = FunctionEvalContext::new(eval_ctx);
+                match execute_statements(&[stmt], &mut top_ctx, program, &function_map) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        diagnostics.push(Diagnostic::error(
+                            format!("Error executing top-level statement: {}", e),
+                            None,
+                        ));
+                    }
                 }
             }
         }
@@ -228,6 +244,99 @@ fn execute_statements(
             }
             Stmt::DetectorDecl(detector) => {
                 program.detectors.push(detector.clone());
+            }
+            // v0.8: Control flow statements
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                // Evaluate condition
+                let cond_val = eval_expr_with_function_ctx(condition, func_ctx.global, Some(func_ctx))
+                    .map_err(|e| format!("Error evaluating if condition: {}", e))?;
+                
+                // Interpret as boolean: true if != 0.0
+                let cond_true = cond_val != 0.0;
+                
+                if cond_true {
+                    // Execute then branch in new scope
+                    let mut then_ctx = func_ctx.clone_scope();
+                    execute_statements(then_branch, &mut then_ctx, program, function_map)?;
+                } else if !else_branch.is_empty() {
+                    // Execute else branch in new scope
+                    let mut else_ctx = func_ctx.clone_scope();
+                    execute_statements(else_branch, &mut else_ctx, program, function_map)?;
+                }
+            }
+            Stmt::For {
+                var_name,
+                start,
+                end,
+                body,
+            } => {
+                // Evaluate start and end
+                let start_val = eval_expr_with_function_ctx(start, func_ctx.global, Some(func_ctx))
+                    .map_err(|e| format!("Error evaluating for loop start: {}", e))?;
+                let end_val = eval_expr_with_function_ctx(end, func_ctx.global, Some(func_ctx))
+                    .map_err(|e| format!("Error evaluating for loop end: {}", e))?;
+                
+                // Convert to integer bounds
+                let start_i = start_val.floor() as i64;
+                let end_i = end_val.floor() as i64;
+                
+                // Execute loop body for each iteration
+                for i in start_i..end_i {
+                    // Create new scope for loop body
+                    let mut loop_ctx = func_ctx.clone_scope();
+                    // Bind loop variable
+                    loop_ctx.local_lets.insert(var_name.clone(), i as f32);
+                    
+                    // Execute body
+                    match execute_statements(body, &mut loop_ctx, program, function_map) {
+                        Ok(Some(return_val)) => {
+                            // Return from function
+                            return Ok(Some(return_val));
+                        }
+                        Ok(None) => {
+                            // Continue loop
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            Stmt::Match { scrutinee, arms } => {
+                // Evaluate scrutinee
+                let scrutinee_val = eval_expr_with_function_ctx(scrutinee, func_ctx.global, Some(func_ctx))
+                    .map_err(|e| format!("Error evaluating match scrutinee: {}", e))?;
+                
+                // Convert to integer (round to nearest)
+                let scrutinee_i = scrutinee_val.round() as i64;
+                
+                // Find matching arm
+                for arm in arms {
+                    let matches = match &arm.pattern {
+                        crate::ast::MatchPattern::Literal(lit) => scrutinee_i == *lit,
+                        crate::ast::MatchPattern::Wildcard => true,
+                    };
+                    
+                    if matches {
+                        // Execute arm body in new scope
+                        let mut arm_ctx = func_ctx.clone_scope();
+                        match execute_statements(&arm.body, &mut arm_ctx, program, function_map) {
+                            Ok(Some(return_val)) => {
+                                // Return from function
+                                return Ok(Some(return_val));
+                            }
+                            Ok(None) => {
+                                // Continue after match
+                            }
+                            Err(e) => return Err(e),
+                        }
+                        break; // Only execute first matching arm
+                    }
+                }
+                
+                // If no arm matched and no wildcard, do nothing (silently continue)
             }
         }
     }
