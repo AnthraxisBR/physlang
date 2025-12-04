@@ -63,7 +63,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 ## Features
 
-### Current (v0.2)
+### Current (v0.5)
 
 - ✅ Particle declarations with position and mass
 - ✅ Forces: gravity, spring, push (in loops)
@@ -72,6 +72,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - ✅ For-loops via oscillators
 - ✅ While-loops via physical conditions
 - ✅ Potential wells as conditionals
+- ✅ **Visual Evaluation Loop (VEL)** - Interactive visualization with live editing
 
 ### Planned
 
@@ -79,7 +80,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - Equilibrium-based termination
 - Additional force types (drag, attractor, repulsion)
 - Energy detectors
-- Visualization tools
+- Web-based visualization
 
 ## Examples
 
@@ -107,6 +108,23 @@ cargo run --bin physlang -- run examples/loop_for_push.phys
 cargo run --bin physlang -- run examples/loop_while_well.phys
 ```
 
+### Visual Evaluation Loop (VEL)
+
+Launch an interactive visualization of your PhysLang program:
+
+```bash
+cargo run --bin physlang -- visual examples/graph_layout.phys
+```
+
+The Visual Evaluation Loop (VEL) provides:
+
+- **Live visualization** of particles and forces in a 2D canvas
+- **Interactive controls**: Play/Pause, Reset, Step, and speed adjustment
+- **File watching**: Edit and save your `.phys` file to automatically reload the simulation
+- **Real-time feedback**: See your program execute step-by-step with visual representation
+
+When you edit and save the source file, VEL will automatically re-parse, re-analyze, and restart the simulation with your updated code. This creates a REPL-like development experience for PhysLang programs.
+
 ## Project Structure
 
 ```
@@ -130,7 +148,8 @@ physlang/
 │       └── runtime.rs       # Runtime execution
 ├── physlang-cli/           # Command-line interface
 │   └── src/
-│       └── main.rs
+│       ├── main.rs
+│       └── vel_app.rs      # Visual Evaluation Loop (VEL) application
 └── examples/               # Example programs
     ├── simple.phys
     ├── graph_layout.phys

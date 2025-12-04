@@ -684,48 +684,113 @@ fn parse_well(line: &str, span: Option<Span>) -> Result<WellDecl, ParseError> {
     
     let after_on = &rest[on_pos + 4..];
     
-    // Find " if position("
-    let if_pos = after_on.find(" if position(").ok_or_else(|| {
-        ParseError::new(format!("Expected 'if position(' in well: {}", line), span)
+    // Find " if " (can be followed by position( or distance()
+    let if_pos = after_on.find(" if ").ok_or_else(|| {
+        ParseError::new(format!("Expected 'if' in well declaration: {}", line), span)
     })?;
     let particle = after_on[..if_pos].trim().to_string();
     
-    let after_if = &after_on[if_pos + 13..];
+    let after_if = &after_on[if_pos + 4..];
     
-    // Find closing paren for position
-    let pos_end = after_if.find(')').ok_or_else(|| {
-        ParseError::new(format!("Expected ')' in position: {}", line), span)
-    })?;
-    let pos_particle = after_if[..pos_end].trim().to_string();
-    
-    // Check for ".x >= "
-    let after_paren = &after_if[pos_end + 1..];
-    if !after_paren.starts_with(".x >= ") {
+    // Try to parse position(...) or distance(...)
+    if after_if.starts_with("position(") {
+        // Parse position(particle).x or position(particle).y
+        let pos_start = after_if.find('(').unwrap();
+        let pos_end = after_if.find(')').ok_or_else(|| {
+            ParseError::new(format!("Expected ')' in position: {}", line), span)
+        })?;
+        let pos_particle = after_if[pos_start + 1..pos_end].trim().to_string();
+        
+        let after_paren = &after_if[pos_end + 1..];
+        if after_paren.starts_with(".x >= ") {
+            let after_x = &after_paren[6..];
+            let depth_pos = after_x.find(" depth ").ok_or_else(|| {
+                ParseError::new(format!("Expected 'depth' in well: {}", line), span)
+            })?;
+            let threshold: f32 = after_x[..depth_pos].trim().parse().map_err(|_| {
+                ParseError::new(format!("Invalid threshold: {}", &after_x[..depth_pos]), span)
+            })?;
+            let depth: f32 = after_x[depth_pos + 7..].trim().parse().map_err(|_| {
+                ParseError::new(format!("Invalid depth: {}", &after_x[depth_pos + 7..]), span)
+            })?;
+            
+            return Ok(WellDecl {
+                name,
+                particle,
+                observable: ObservableExpr::PositionX(pos_particle),
+                threshold,
+                depth,
+            });
+        } else if after_paren.starts_with(".y >= ") {
+            let after_y = &after_paren[6..];
+            let depth_pos = after_y.find(" depth ").ok_or_else(|| {
+                ParseError::new(format!("Expected 'depth' in well: {}", line), span)
+            })?;
+            let threshold: f32 = after_y[..depth_pos].trim().parse().map_err(|_| {
+                ParseError::new(format!("Invalid threshold: {}", &after_y[..depth_pos]), span)
+            })?;
+            let depth: f32 = after_y[depth_pos + 7..].trim().parse().map_err(|_| {
+                ParseError::new(format!("Invalid depth: {}", &after_y[depth_pos + 7..]), span)
+            })?;
+            
+            return Ok(WellDecl {
+                name,
+                particle,
+                observable: ObservableExpr::PositionY(pos_particle),
+                threshold,
+                depth,
+            });
+        } else {
+            return Err(ParseError::new(
+                format!("Expected '.x >= ' or '.y >= ' after position: {}", line),
+                span,
+            ));
+        }
+    } else if after_if.starts_with("distance(") {
+        // Parse distance(a, b) >= threshold
+        let dist_start = after_if.find('(').unwrap();
+        let dist_end = after_if.find(')').ok_or_else(|| {
+            ParseError::new(format!("Expected ')' in distance: {}", line), span)
+        })?;
+        let args_str = &after_if[dist_start + 1..dist_end];
+        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
+        if args.len() != 2 {
+            return Err(ParseError::new(
+                format!("Expected two particle names in distance: {}", line),
+                span,
+            ));
+        }
+        
+        let after_paren = &after_if[dist_end + 1..];
+        if !after_paren.starts_with(" >= ") {
+            return Err(ParseError::new(
+                format!("Expected ' >= ' after distance: {}", line),
+                span,
+            ));
+        }
+        
+        let after_ge = &after_paren[4..];
+        let depth_pos = after_ge.find(" depth ").ok_or_else(|| {
+            ParseError::new(format!("Expected 'depth' in well: {}", line), span)
+        })?;
+        let threshold: f32 = after_ge[..depth_pos].trim().parse().map_err(|_| {
+            ParseError::new(format!("Invalid threshold: {}", &after_ge[..depth_pos]), span)
+        })?;
+        let depth: f32 = after_ge[depth_pos + 7..].trim().parse().map_err(|_| {
+            ParseError::new(format!("Invalid depth: {}", &after_ge[depth_pos + 7..]), span)
+        })?;
+        
+        return Ok(WellDecl {
+            name,
+            particle,
+            observable: ObservableExpr::Distance(args[0].to_string(), args[1].to_string()),
+            threshold,
+            depth,
+        });
+    } else {
         return Err(ParseError::new(
-            format!("Expected '.x >= ' after position: {}", line),
+            format!("Expected 'position(' or 'distance(' in well: {}", line),
             span,
         ));
     }
-    
-    let after_x = &after_paren[6..];
-    
-    // Find " depth "
-    let depth_pos = after_x.find(" depth ").ok_or_else(|| {
-        ParseError::new(format!("Expected 'depth' in well: {}", line), span)
-    })?;
-    let threshold: f32 = after_x[..depth_pos].trim().parse().map_err(|_| {
-        ParseError::new(format!("Invalid threshold: {}", &after_x[..depth_pos]), span)
-    })?;
-    
-    let depth: f32 = after_x[depth_pos + 7..].trim().parse().map_err(|_| {
-        ParseError::new(format!("Invalid depth: {}", &after_x[depth_pos + 7..]), span)
-    })?;
-    
-    Ok(WellDecl {
-        name,
-        particle,
-        observable: ObservableExpr::PositionX(pos_particle),
-        threshold,
-        depth,
-    })
 }
