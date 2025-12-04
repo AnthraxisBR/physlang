@@ -5,51 +5,69 @@ This document defines the complete syntax of PhysLang using Extended Backus-Naur
 ## Grammar
 
 ```
-Program         ::= Statement* EOF ;
+Program         ::= (LetDecl | FunctionDecl | TopLevelCall)*
+                    (ParticleDecl | ForceDecl | WellDecl | LoopDecl | SimulateDecl | DetectorDecl)*
+                    EOF ;
 
-Statement       ::= ParticleDecl
+LetDecl         ::= "let" Ident "=" Expr ";" ;
+
+FunctionDecl    ::= "fn" Ident "(" ParamList? ")" "{" Stmt* "}" ;
+
+ParamList       ::= Ident ("," Ident)* ;
+
+TopLevelCall    ::= Ident "(" ArgList? ")" ";" ;
+
+ArgList         ::= Expr ("," Expr)* ;
+
+Stmt            ::= LetDecl
+                  | ExprCall
+                  | ParticleDecl
                   | ForceDecl
                   | WellDecl
                   | LoopDecl
-                  | SimulateDecl
-                  | DetectorDecl ;
+                  | DetectorDecl
+                  | ReturnStmt ;
 
-ParticleDecl    ::= "particle" Ident "at" "(" Float "," Float ")"
-                    "mass" Float ;
+ExprCall        ::= Ident "(" ArgList? ")" ";" ;
+
+ReturnStmt      ::= "return" Expr ";" ;
+
+ParticleDecl    ::= "particle" Ident "at" "(" Expr "," Expr ")"
+                    "mass" Expr ;
 
 ForceDecl       ::= "force" ForceSpec ;
 
-ForceSpec       ::= "gravity" "(" Ident "," Ident ")" "G" "=" Float
-                  | "spring"  "(" Ident "," Ident ")" "k" "=" Float
-                                   "rest" "=" Float
-                  | "push"    "(" Ident ")" "magnitude" Float
-                                   "direction" "(" Float "," Float ")" ;
+ForceSpec       ::= "gravity" "(" Ident "," Ident ")" "G" "=" Expr
+                  | "spring"  "(" Ident "," Ident ")" "k" "=" Expr
+                                   "rest" "=" Expr
+                  | "push"    "(" Ident ")" "magnitude" Expr
+                                   "direction" "(" Expr "," Expr ")" ;
 
 WellDecl        ::= "well" Ident "on" Ident
                     "if" ObservableRel
-                    "depth" Float ;
+                    "depth" Expr ;
 
 LoopDecl        ::= "loop" LoopKind "{" LoopBodyStmt* "}" ;
 
 LoopKind        ::= LoopForCycles
                   | LoopWhile ;
 
-LoopForCycles   ::= "for" Integer "cycles"
-                    "with" "frequency" Float
-                          "damping"   Float
+LoopForCycles   ::= "for" Expr "cycles"
+                    "with" "frequency" Expr
+                          "damping"   Expr
                     "on" Ident ;
 
 LoopWhile       ::= "while" ConditionExpr
-                    "with" "frequency" Float
-                          "damping"   Float
+                    "with" "frequency" Expr
+                          "damping"   Expr
                     "on" Ident ;
 
 LoopBodyStmt    ::= "force" "push" "(" Ident ")"
-                    "magnitude" Float
-                    "direction" "(" Float "," Float ")" ;
+                    "magnitude" Expr
+                    "direction" "(" Expr "," Expr ")" ;
 
-SimulateDecl    ::= "simulate" "dt" "=" Float
-                    "steps" "=" Integer ;
+SimulateDecl    ::= "simulate" "dt" "=" Expr
+                    "steps" "=" Expr ;
 
 DetectorDecl    ::= "detect" Ident "=" DetectorExpr ;
 
@@ -58,10 +76,29 @@ DetectorExpr    ::= "position" "(" Ident ")"        // returns x-coordinate in v
 
 ConditionExpr   ::= ObservableRel ;
 
-ObservableRel   ::= Observable (("<" | ">" | "<=" | ">=") Float) ;
+ObservableRel   ::= Observable (("<" | ">" | "<=" | ">=") Expr) ;
 
 Observable      ::= "position" "(" Ident ")" "." ("x" | "y")
                   | "distance" "(" Ident "," Ident ")" ;
+
+Expr            ::= ExprAdd ;
+
+ExprAdd         ::= ExprMul (("+" | "-") ExprMul)* ;
+
+ExprMul         ::= ExprUnary (("*" | "/") ExprUnary)* ;
+
+ExprUnary       ::= "-" ExprUnary
+                  | ExprPrimary ;
+
+ExprPrimary     ::= Float
+                  | Integer
+                  | Ident
+                  | FuncCall
+                  | "(" Expr ")" ;
+
+FuncCall        ::= FuncName "(" ArgList? ")" ;
+
+FuncName        ::= "sin" | "cos" | "sqrt" | "clamp" ;
 
 Ident           ::= [A-Za-z_][A-Za-z0-9_]* ;
 
@@ -286,6 +323,85 @@ All keywords are **lowercase**: `particle`, `force`, `simulate`, `detect`, `loop
 - Each statement typically appears on one line
 - Comments can appear on their own line or after statements
 
+### Expressions (v0.6+)
+
+Expressions can be used in all numeric positions. They support:
+
+**Arithmetic operations**:
+- Addition: `+`
+- Subtraction: `-`
+- Multiplication: `*`
+- Division: `/`
+- Unary minus: `-expr`
+
+**Operator precedence** (highest to lowest):
+1. Unary minus
+2. Multiplication, Division
+3. Addition, Subtraction
+
+**Built-in functions**:
+- `sin(expr)` - Sine (1 argument)
+- `cos(expr)` - Cosine (1 argument)
+- `sqrt(expr)` - Square root (1 argument)
+- `clamp(expr, min, max)` - Clamp value between min and max (3 arguments)
+
+**Examples**:
+```phys
+let pi = 3.14159;
+let half_pi = pi / 2.0;
+let k = sqrt(2.0) * 5.0;
+let clamped = clamp(x, 0.0, 10.0);
+```
+
+### Variables (v0.6+)
+
+**Let bindings**:
+```phys
+let <name> = <expr>;
+```
+
+Declares a variable that can be used in subsequent expressions. Variables are evaluated at "compile-time" (before simulation).
+
+**Example**:
+```phys
+let g = 9.81;
+let mass = 1.0;
+particle a at (0.0, 0.0) mass mass
+force gravity(a, b) G = g
+```
+
+### Functions (v0.7+)
+
+**Function definitions**:
+```phys
+fn <name>(<param1>, <param2>, ...) {
+    <statements>
+}
+```
+
+Functions can contain:
+- Local `let` bindings
+- Function calls (including recursive calls)
+- World-building statements (particles, forces, loops, wells, detectors)
+- `return <expr>;` statements (scalar return values)
+
+**Function calls**:
+```phys
+<name>(<arg1>, <arg2>, ...);
+```
+
+Functions can be called at the top level or inside other functions.
+
+**Example**:
+```phys
+fn make_particle(name, x, y, m) {
+    particle name at (x, y) mass m
+}
+
+make_particle(a, 0.0, 0.0, 1.0);
+make_particle(b, 5.0, 0.0, 1.0);
+```
+
 ### Reserved Words
 
 The following are reserved keywords and cannot be used as identifiers:
@@ -295,4 +411,6 @@ The following are reserved keywords and cannot be used as identifiers:
 - `well`, `if`, `depth`
 - `at`, `mass`, `G`, `k`, `rest`, `magnitude`, `direction`
 - `dt`, `steps`
+- `let`, `fn`, `return` (v0.6+)
+- `sin`, `cos`, `sqrt`, `clamp` (v0.6+)
 

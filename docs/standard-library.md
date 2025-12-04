@@ -340,6 +340,71 @@ Use the **most restrictive** constraint.
 - **Oscillator frequency**: $0.5$ to $2.0$
 - **Damping**: $0.0$ to $0.1$
 
+## Built-in Functions (v0.6+)
+
+PhysLang provides several built-in mathematical functions that can be used in expressions:
+
+### sin
+
+```phys
+sin(expr)
+```
+
+**Returns**: Sine of the angle (in radians)
+
+**Example**:
+```phys
+let angle = 3.14159 / 2.0;
+let y = sin(angle);  # y ≈ 1.0
+```
+
+### cos
+
+```phys
+cos(expr)
+```
+
+**Returns**: Cosine of the angle (in radians)
+
+**Example**:
+```phys
+let angle = 0.0;
+let x = cos(angle);  # x = 1.0
+```
+
+### sqrt
+
+```phys
+sqrt(expr)
+```
+
+**Returns**: Square root of the value
+
+**Example**:
+```phys
+let k = sqrt(2.0);  # k ≈ 1.414
+let spring_k = sqrt(mass) * 5.0;
+```
+
+### clamp
+
+```phys
+clamp(value, min, max)
+```
+
+**Returns**: Value clamped between `min` and `max`
+
+**Example**:
+```phys
+let safe_k = clamp(k, 0.1, 10.0);  # Ensures k is in valid range
+let bounded = clamp(position(a).x, -10.0, 10.0);
+```
+
+**Use Cases**:
+- Ensuring parameters stay in valid ranges
+- Bounding values for stability
+- Creating safe defaults
+
 ## Future Additions
 
 Potential future built-ins:
@@ -349,4 +414,5 @@ Potential future built-ins:
 - **Repulsion**: `force repulsion(a, b) strength s`
 - **Energy observables**: `energy_kinetic(a)`, `energy_potential(a)`
 - **Speed observable**: `speed(a)`
+- **More math functions**: `tan`, `exp`, `log`, `abs`, `min`, `max`
 

@@ -50,6 +50,25 @@ detect a_pos = position(a)
 detect dist_ab = distance(a, b)
 ```
 
+Or using expressions and variables (v0.6+):
+
+```phys
+let g = 1.0;
+let k = 2.0;
+let rest_len = 3.0;
+
+particle a at (0.0, 0.0) mass 1.0
+particle b at (5.0, 0.0) mass 1.0
+
+force gravity(a, b) G = g
+force spring(a, b) k = k rest = rest_len
+
+simulate dt = 0.01 steps = 10000
+
+detect a_pos = position(a)
+detect dist_ab = distance(a, b)
+```
+
 Run it:
 
 ```bash
@@ -115,6 +134,48 @@ force spring(a, b) k = 2.0 rest = 3.0
 - `k`: Spring stiffness
 - `rest`: Equilibrium distance
 
+### Variables and Expressions (v0.6+)
+
+Use `let` bindings to define reusable values:
+
+```phys
+let pi = 3.14159;
+let mass = 1.0;
+let spring_k = sqrt(2.0) * 5.0;
+```
+
+Expressions support arithmetic (`+`, `-`, `*`, `/`) and built-in functions (`sin`, `cos`, `sqrt`, `clamp`):
+
+```phys
+let angle = pi / 4.0;
+let k = sin(angle) * 10.0;
+let clamped = clamp(x, 0.0, 10.0);
+```
+
+### Functions (v0.7+)
+
+Define reusable functions to build worlds programmatically:
+
+```phys
+fn make_particle(name, x, y, m) {
+    particle name at (x, y) mass m
+}
+
+make_particle(a, 0.0, 0.0, 1.0);
+make_particle(b, 5.0, 0.0, 1.0);
+```
+
+Functions can contain local variables, world-building statements, and return values:
+
+```phys
+fn compute_k(mass, frequency) {
+    let omega = 2.0 * 3.14159 * frequency;
+    return mass * omega * omega;
+}
+
+let k = compute_k(1.0, 2.0);
+```
+
 ### Simulation
 
 Configure how the physics runs:
@@ -127,6 +188,14 @@ simulate dt = 0.01 steps = 10000
 - `steps`: Number of integration steps
 
 Total simulation time = `dt * steps` = `0.01 * 10000` = `100` time units.
+
+You can use expressions for these values too:
+
+```phys
+let timestep = 0.01;
+let num_steps = 10000;
+simulate dt = timestep steps = num_steps
+```
 
 ### Detectors
 

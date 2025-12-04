@@ -300,6 +300,96 @@ After simulation, detectors output risk metrics:
 - Adjust well depths to model different regulatory regimes
 - Vary gravity strength to simulate different market conditions
 
+## Expressions and Functions Examples (v0.6+)
+
+### Using Expressions
+
+**File**: Create `examples/expressions.phys`
+
+```phys
+let pi = 3.14159;
+let mass = 1.0;
+let frequency = 2.0;
+let omega = 2.0 * pi * frequency;
+let k = mass * omega * omega;
+
+particle a at (0.0, 0.0) mass mass
+particle b at (sqrt(2.0) * 5.0, 0.0) mass mass
+
+force spring(a, b) k = k rest = 5.0
+
+simulate dt = 0.01 steps = 10000
+
+detect dist = distance(a, b)
+```
+
+**What it demonstrates**:
+- Using `let` bindings for reusable values
+- Arithmetic expressions (`*`, `/`)
+- Built-in functions (`sqrt`)
+- Expressions in all numeric positions
+
+### Using Functions
+
+**File**: Create `examples/functions.phys`
+
+```phys
+fn make_particle(name, x, y, m) {
+    particle name at (x, y) mass m
+}
+
+fn connect_spring(a, b, stiffness) {
+    let rest = distance(a, b);
+    force spring(a, b) k = stiffness rest = rest
+}
+
+make_particle(a, 0.0, 0.0, 1.0);
+make_particle(b, 5.0, 0.0, 1.0);
+make_particle(c, 2.5, 4.33, 1.0);
+
+connect_spring(a, b, 2.0);
+connect_spring(b, c, 2.0);
+connect_spring(c, a, 2.0);
+
+simulate dt = 0.01 steps = 10000
+
+detect dist_ab = distance(a, b)
+```
+
+**What it demonstrates**:
+- Function definitions for reusable patterns
+- Functions generating particles and forces
+- Parameterized world-building
+
+### Advanced: Functions with Return Values
+
+**File**: Create `examples/function_returns.phys`
+
+```phys
+fn compute_spring_k(mass, frequency) {
+    let pi = 3.14159;
+    let omega = 2.0 * pi * frequency;
+    return mass * omega * omega;
+}
+
+let k1 = compute_spring_k(1.0, 2.0);
+let k2 = compute_spring_k(2.0, 1.5);
+
+particle a at (0.0, 0.0) mass 1.0
+particle b at (5.0, 0.0) mass 1.0
+
+force spring(a, b) k = k1 rest = 5.0
+
+simulate dt = 0.01 steps = 10000
+
+detect dist = distance(a, b)
+```
+
+**What it demonstrates**:
+- Functions returning scalar values
+- Using function return values in expressions
+- Computed parameters
+
 ## Use Case Patterns
 
 ### Pattern 1: Mass-Spring Oscillator

@@ -7,8 +7,9 @@ PhysLang is a domain-specific language where program execution is a 2D physics s
 ### Execution Model
 
 - **Program** = A 2D physical system
-- **Variables** = Particles (mass points)
+- **Variables** = Particles (mass points) + Scalar variables (v0.6+)
 - **Operations** = Forces between particles
+- **Abstraction** = User-defined functions (v0.7+)
 - **Control-flow** = Oscillators (loops) and potential wells (conditionals)
 - **Execution** = Time integration of Newtonian equations
 - **Output** = Detectors applied to final state
@@ -18,6 +19,8 @@ PhysLang is a domain-specific language where program execution is a 2D physics s
 - **Interpreted**: Programs are parsed and executed directly
 - **Deterministic**: Fixed integrator and time step ensure reproducibility
 - **Fixed-step ODE integration**: Uses semi-implicit Euler method
+- **Compile-time evaluation** (v0.6+): Expressions and variables are evaluated before simulation
+- **Macro-like functions** (v0.7+): Functions generate world-building statements before simulation
 
 ## Formal Definitions
 

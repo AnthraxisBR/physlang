@@ -26,6 +26,22 @@ $$\Gamma_p : \text{Ident} \rightarrow \text{ParticleDecl}$$
 
 This environment is built during parsing by collecting all `particle` declarations.
 
+#### Variable Environment (v0.6+)
+
+The variable environment $\Gamma_v$ maps identifiers to evaluated scalar values:
+
+$$\Gamma_v : \text{Ident} \rightarrow \text{Scalar}$$
+
+This environment is built by evaluating all top-level `let` bindings before simulation.
+
+#### Function Environment (v0.7+)
+
+The function environment $\Gamma_f$ maps identifiers to function declarations:
+
+$$\Gamma_f : \text{Ident} \rightarrow \text{FunctionDecl}$$
+
+This environment is built during parsing by collecting all `fn` declarations.
+
 ### Well-Formedness Rules
 
 A PhysLang program is **well-formed** if it satisfies the following rules:
@@ -268,21 +284,90 @@ At the end of simulation (after $N$ steps), detectors are evaluated on the final
 
 Detectors return a list of `(name, value)` pairs, where `value` is a `Scalar`.
 
+## Expression Evaluation (v0.6+)
+
+Expressions are evaluated at "compile-time" (before simulation) to concrete `f32` values.
+
+### Evaluation Context
+
+An evaluation context $E$ maps variable names to their values:
+
+$$E : \text{Ident} \rightarrow \text{Scalar}$$
+
+### Expression Semantics
+
+- **Literals**: `1.0` → $1.0$, `42` → $42.0$
+- **Variables**: `x` → $E(x)$ if $x \in \text{dom}(E)$, else error
+- **Unary minus**: `-e` → $-v$ where $v = \text{eval}(e, E)$
+- **Binary operations**: `e1 + e2` → $\text{eval}(e1, E) + \text{eval}(e2, E)$ (similar for `-`, `*`, `/`)
+- **Function calls**:
+  - `sin(x)` → $\sin(\text{eval}(x, E))$
+  - `cos(x)` → $\cos(\text{eval}(x, E))$
+  - `sqrt(x)` → $\sqrt{\text{eval}(x, E)}$ (error if negative)
+  - `clamp(x, min, max)` → $\text{clamp}(\text{eval}(x, E), \text{eval}(min, E), \text{eval}(max, E))$
+
+### Let Binding Evaluation
+
+Let bindings are evaluated in order:
+
+1. Evaluate expression: $v = \text{eval}(\text{expr}, E)$
+2. Extend environment: $E' = E[x \mapsto v]$
+3. Continue with $E'$ for subsequent bindings
+
+**Error conditions**:
+- Unknown variable in expression
+- Division by zero
+- Negative argument to `sqrt`
+- Invalid `clamp` arguments (min > max)
+
+## Function Execution (v0.7+)
+
+Functions are executed before simulation to generate world-building statements.
+
+### Function Call Semantics
+
+When a function `fn f(x1, x2, ...) { body }` is called with arguments `(a1, a2, ...)`:
+
+1. **Create local context**: $E_{\text{local}} = \{x1 \mapsto \text{eval}(a1, E), x2 \mapsto \text{eval}(a2, E), ...\}$
+2. **Execute body**: For each statement in `body`:
+   - If `let y = e`: Evaluate $e$ in $E_{\text{local}} \cup E_{\text{global}}$, extend $E_{\text{local}}$
+   - If `f(...)`: Recursively call function
+   - If world-building statement: Generate AST node
+   - If `return e`: Evaluate and return (if scalar return)
+3. **Merge generated statements** into main program AST
+
+### Scope Resolution
+
+Variable lookup order (highest to lowest priority):
+1. Local `let` bindings in current function
+2. Function parameters
+3. Global `let` bindings
+
+### Function Execution Model
+
+Functions are "world-building macros" that execute before simulation:
+- They modify the AST by generating particles, forces, loops, wells, etc.
+- They do NOT execute during simulation
+- They are pure in the sense that they only generate declarations (no side effects during simulation)
+
 ## Operational Semantics Summary
 
 The execution of a PhysLang program can be summarized as:
 
-1. **Parse** → Build AST and particle environment $\Gamma_p$
+1. **Parse** → Build AST and environments ($\Gamma_p$, $\Gamma_f$)
 2. **Validate** → Check well-formedness rules
-3. **Build World** → Create initial world state $W(0)$
-4. **Build Loops/Wells** → Create loop and well instances
-5. **Simulate** → For $i = 1..N$:
+3. **Evaluate Global Lets** → Build variable environment $\Gamma_v$ (v0.6+)
+4. **Execute Functions** → Generate world-building statements from function calls (v0.7+)
+5. **Re-validate** → Check well-formedness of generated world
+6. **Build World** → Create initial world state $W(0)$
+7. **Build Loops/Wells** → Create loop and well instances
+8. **Simulate** → For $i = 1..N$:
    - Update loops
    - Apply wells
    - Integrate physics
    - Evaluate conditions
-6. **Detect** → Evaluate detectors on $W(T)$
-7. **Output** → Return detector results
+9. **Detect** → Evaluate detectors on $W(T)$
+10. **Output** → Return detector results
 
 This provides a deterministic, physically-grounded execution model where computation emerges from the evolution of a dynamical system.
 
