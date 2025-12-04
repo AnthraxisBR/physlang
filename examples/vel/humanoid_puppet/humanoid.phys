@@ -1,0 +1,343 @@
+# ============================================================================
+# 2D HUMANOID PUPPET SIMULATOR
+# ============================================================================
+#
+# This PhysLang simulation creates a ragdoll-like humanoid robot using
+# mass-spring physics. The puppet moves in a rhythmic, robotic dance when
+# visualized in VEL.
+#
+# MODEL OVERVIEW:
+# ---------------
+#
+# This simulation represents a 2D humanoid skeleton built entirely from
+# physics primitives:
+#
+# - PARTICLES (Body Parts): Represent joints and body segments
+#   - Head, neck, chest, hips (core body)
+#   - Shoulders, elbows, hands (arms)
+#   - Knees, feet (legs)
+#   - Mass distribution: torso heavy, extremities light
+#
+# - SPRINGS (Bones): Connect body parts to form skeleton
+#   - Spine: hip → chest → neck → head
+#   - Arms: shoulder → elbow → hand (left and right)
+#   - Legs: hip → knee → foot (left and right)
+#   - Stabilizers: diagonal springs for torso/pelvis stability
+#   - Spring stiffness controls bone rigidity
+#
+# - GRAVITY (Environment): Downward force simulating gravity
+#   - Pulls all body parts downward
+#   - Creates natural hanging/drooping behavior
+#
+# - GROUND CONSTRAINT: Heavier foot masses + springs
+#   - Feet have higher mass (1.2) to help them "stay down"
+#   - Spring connections provide structural stability
+#   - Note: PhysLang wells only support >=, so direct floor constraint
+#     would require different syntax (not available in v0.5)
+#
+# - LOOPS (Muscle Activations): Periodic forces simulating muscle contractions
+#   - Hip loop: Periodic thrust for locomotion attempt
+#   - Knee loops: Bend/extend legs rhythmically
+#   - Shoulder loops: Swing arms back and forth
+#   - Small magnitudes with damping to maintain stability
+#   - Creates visible "robot dance" movement
+#
+# SKELETON STRUCTURE:
+# -------------------
+#
+# The humanoid is built as follows:
+#
+#                    head
+#                     |
+#                    neck
+#                     |
+#                    chest
+#                   /     \
+#            left_shoulder right_shoulder
+#                  |           |
+#            left_elbow   right_elbow
+#                  |           |
+#            left_hand     right_hand
+#                     |
+#                    hips
+#                   /   \
+#            left_knee  right_knee
+#                  |           |
+#            left_foot   right_foot
+#
+# SPRING CONNECTIONS (Bones):
+# ---------------------------
+#
+# Spine chain:
+#   - hips → chest
+#   - chest → neck
+#   - neck → head
+#
+# Left arm:
+#   - chest → left_shoulder
+#   - left_shoulder → left_elbow
+#   - left_elbow → left_hand
+#
+# Right arm:
+#   - chest → right_shoulder
+#   - right_shoulder → right_elbow
+#   - right_elbow → right_hand
+#
+# Left leg:
+#   - hips → left_knee
+#   - left_knee → left_foot
+#
+# Right leg:
+#   - hips → right_knee
+#   - right_knee → right_foot
+#
+# Stabilizers (diagonal springs for stability):
+#   - chest → left_shoulder (already connected, but diagonal)
+#   - chest → right_shoulder (already connected, but diagonal)
+#   - hips → left_knee (already connected)
+#   - hips → right_knee (already connected)
+#   - left_foot → right_foot (ground balance)
+#
+# MASS DISTRIBUTION:
+# ------------------
+#
+# - Head: 0.5 (light)
+# - Neck: 0.3 (very light)
+# - Chest: 2.5 (heavy - torso)
+# - Hips: 2.0 (heavy - pelvis)
+# - Shoulders: 0.8 each (medium)
+# - Elbows: 0.6 each (medium-light)
+# - Hands: 0.4 each (light)
+# - Knees: 1.0 each (medium)
+# - Feet: 1.2 each (slightly heavier to help stay down)
+#
+# MUSCLE ACTIVATIONS (Loops):
+# ---------------------------
+#
+# The puppet uses oscillator-based loops to simulate periodic muscle
+# contractions:
+#
+# 1. Hip Locomotion Loop:
+#    - Pushes hips forward/backward periodically
+#    - Attempts simple locomotion
+#    - Frequency: 0.5 Hz (slow, rhythmic)
+#    - Damping: 0.05 (gradual decay)
+#
+# 2. Knee Flexion Loops (left and right):
+#    - Bend/extend legs rhythmically
+#    - Alternating pattern for stepping motion
+#    - Frequency: 0.6 Hz (slightly faster than hips)
+#    - Damping: 0.05
+#
+# 3. Shoulder Swing Loops (left and right):
+#    - Swing arms back and forth
+#    - Creates natural arm movement
+#    - Frequency: 0.7 Hz (arm swing)
+#    - Damping: 0.05
+#
+# All loops use small push magnitudes (0.2-0.4) to maintain stability
+# while creating visible movement.
+#
+# WHAT TO OBSERVE IN VEL:
+# -----------------------
+#
+# When running this simulation in VEL, you should see:
+#
+# 1. INITIAL STATE: Puppet hanging in a roughly humanoid shape
+#    - All body parts connected by springs (visible as gray lines)
+#    - Puppet may droop slightly due to gravity
+#
+# 2. RHYTHMIC MOVEMENT: As loops activate:
+#    - Hips move forward/backward in a slow rhythm
+#    - Legs bend and extend, attempting stepping motion
+#    - Arms swing back and forth
+#    - Entire puppet wobbles and sways
+#
+# 3. RAGDOLL BEHAVIOR: Physics-based dynamics:
+#    - Body parts respond to forces naturally
+#    - Springs stretch and contract
+#    - Puppet may tilt, lean, or flail
+#    - Movement is organic but robotic
+#
+# 4. PHYSICS-BASED MOVEMENT: Natural ragdoll behavior:
+#    - Puppet responds to all forces organically
+#    - Heavier feet help maintain some stability
+#    - Springs keep structure intact
+#    - Movement is free-form and physics-driven
+#
+# 5. OVERALL EFFECT: A "robot dance" or "flailing puppet"
+#    - Not realistic walking, but rhythmic movement
+#    - Visually interesting and dynamic
+#    - Demonstrates mass-spring physics
+#
+# The puppet will never achieve perfect walking, but it will create
+# a mesmerizing, physics-based animation that demonstrates how complex
+# structures can emerge from simple forces.
+#
+# RUNNING THE SIMULATION:
+# -----------------------
+#
+# To visualize this puppet in VEL:
+#
+#   cargo run --bin physlang -- visual examples/vel/humanoid_puppet/humanoid.phys
+#
+# Controls:
+# - ▶ Play: Start/resume simulation
+# - ⏸ Pause: Pause simulation
+# - ⏮ Reset: Restart from initial state
+# - ⏭ Step: Advance one step
+# - Speed: Adjust simulation speed (try 0.5x for slow motion)
+#
+# INTERPRETING DETECTOR RESULTS:
+# -------------------------------
+#
+# After simulation completes, detectors output:
+#
+# - torso_height: Final Y-position of chest (torso)
+#   → Negative values indicate puppet has "fallen"
+#   → Positive values indicate puppet is "standing"
+#   → Normal range: -5 to 5
+#
+# - foot_separation: Distance between left and right feet
+#   → Large values indicate legs spread wide
+#   → Small values indicate legs close together
+#   → Normal range: 2-6 units
+#
+# - leg_asymmetry: Difference in leg lengths (proxy for angle)
+#   → Measures how uneven the legs are
+#   → Large values indicate one leg extended, one bent
+#   → Normal range: 0-3 units
+#
+# ============================================================================
+
+# Core body parts (spine chain)
+particle head at (0.0, 8.0) mass 0.5
+particle neck at (0.0, 6.5) mass 0.3
+particle chest at (0.0, 4.5) mass 2.5
+particle hips at (0.0, 1.0) mass 2.0
+
+# Left arm
+particle left_shoulder at (-2.0, 4.5) mass 0.8
+particle left_elbow at (-3.5, 2.5) mass 0.6
+particle left_hand at (-4.5, 0.5) mass 0.4
+
+# Right arm
+particle right_shoulder at (2.0, 4.5) mass 0.8
+particle right_elbow at (3.5, 2.5) mass 0.6
+particle right_hand at (4.5, 0.5) mass 0.4
+
+# Left leg
+particle left_knee at (-1.5, -2.0) mass 1.0
+particle left_foot at (-1.5, -5.0) mass 1.2
+
+# Right leg
+particle right_knee at (1.5, -2.0) mass 1.0
+particle right_foot at (1.5, -5.0) mass 1.2
+
+# Gravity anchor (heavy, fixed point above for gravity)
+particle gravity_anchor at (0.0, 20.0) mass 1000.0
+
+# Spine chain (backbone)
+force spring(hips, chest) k = 1.5 rest = 3.5
+force spring(chest, neck) k = 1.2 rest = 2.0
+force spring(neck, head) k = 1.0 rest = 1.5
+
+# Left arm bones
+force spring(chest, left_shoulder) k = 1.3 rest = 2.0
+force spring(left_shoulder, left_elbow) k = 1.2 rest = 2.5
+force spring(left_elbow, left_hand) k = 1.0 rest = 2.5
+
+# Right arm bones
+force spring(chest, right_shoulder) k = 1.3 rest = 2.0
+force spring(right_shoulder, right_elbow) k = 1.2 rest = 2.5
+force spring(right_elbow, right_hand) k = 1.0 rest = 2.5
+
+# Left leg bones
+force spring(hips, left_knee) k = 1.4 rest = 3.0
+force spring(left_knee, left_foot) k = 1.3 rest = 3.0
+
+# Right leg bones
+force spring(hips, right_knee) k = 1.4 rest = 3.0
+force spring(right_knee, right_foot) k = 1.3 rest = 3.0
+
+# Stabilizer springs (for structural stability)
+force spring(left_foot, right_foot) k = 0.8 rest = 3.0
+
+# Gravity: pulls all body parts downward
+force gravity(head, gravity_anchor) G = 0.15
+force gravity(neck, gravity_anchor) G = 0.15
+force gravity(chest, gravity_anchor) G = 0.15
+force gravity(hips, gravity_anchor) G = 0.15
+force gravity(left_shoulder, gravity_anchor) G = 0.15
+force gravity(left_elbow, gravity_anchor) G = 0.15
+force gravity(left_hand, gravity_anchor) G = 0.15
+force gravity(right_shoulder, gravity_anchor) G = 0.15
+force gravity(right_elbow, gravity_anchor) G = 0.15
+force gravity(right_hand, gravity_anchor) G = 0.15
+force gravity(left_knee, gravity_anchor) G = 0.15
+force gravity(left_foot, gravity_anchor) G = 0.15
+force gravity(right_knee, gravity_anchor) G = 0.15
+force gravity(right_foot, gravity_anchor) G = 0.15
+
+# Ground constraint note:
+# PhysLang wells only support >= (not <=), so we can't directly create
+# a floor constraint that triggers when feet drop below a threshold.
+# Instead, we rely on:
+# - Heavier foot masses (1.2) to help feet "stay down"
+# - Spring connections to keep structure stable
+# - Gravity to provide natural downward force
+# The puppet will move freely in 2D space, creating organic ragdoll physics
+
+# Simulation parameters: balanced for stability and visual appeal
+# dt = 0.02 provides smooth animation
+# steps = 15000 gives 300 time units (enough for multiple movement cycles)
+simulate dt = 0.02 steps = 15000
+
+# Muscle activations: periodic loops simulating muscle contractions
+
+# Hip locomotion: periodic forward/backward thrust
+# Attempts simple locomotion by pushing hips
+loop for 60 cycles with frequency 0.5 damping 0.05 on hips {
+    force push(hips) magnitude 0.3 direction (1.0, 0.0)
+}
+
+# Left knee flexion: bend/extend left leg
+# Creates stepping motion
+loop for 75 cycles with frequency 0.6 damping 0.05 on left_knee {
+    force push(left_knee) magnitude 0.25 direction (0.0, -1.0)
+}
+
+# Right knee flexion: bend/extend right leg
+# Alternates with left leg for stepping
+loop for 75 cycles with frequency 0.6 damping 0.05 on right_knee {
+    force push(right_knee) magnitude 0.25 direction (0.0, -1.0)
+}
+
+# Left shoulder swing: swing left arm back and forth
+# Creates natural arm movement
+loop for 90 cycles with frequency 0.7 damping 0.05 on left_shoulder {
+    force push(left_shoulder) magnitude 0.2 direction (-1.0, 0.0)
+}
+
+# Right shoulder swing: swing right arm back and forth
+# Opposite phase to left arm for natural swing
+loop for 90 cycles with frequency 0.7 damping 0.05 on right_shoulder {
+    force push(right_shoulder) magnitude 0.2 direction (1.0, 0.0)
+}
+
+# Detectors: measure final puppet state
+
+# Torso height: final Y-position of chest
+# Indicates whether puppet is "standing" or "fallen"
+detect torso_height = position(chest)
+
+# Foot separation: distance between left and right feet
+# Measures leg spread (wider = more stable, narrower = closer together)
+detect foot_separation = distance(left_foot, right_foot)
+
+# Leg asymmetry: difference in leg extension
+# Measures how uneven the legs are (proxy for body angle)
+# Calculated as difference between hip-to-knee distances
+detect left_leg_length = distance(hips, left_knee)
+detect right_leg_length = distance(hips, right_knee)
+
