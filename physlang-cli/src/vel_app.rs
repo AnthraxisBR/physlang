@@ -159,11 +159,50 @@ impl eframe::App for VelApp {
             let rect = ui.max_rect();
             let painter = ui.painter();
 
-            // Coordinate transformation: map world coordinates to screen
-            // Assume world coordinates are roughly in [-20, 20] range
-            let world_range = 40.0; // from -20 to 20
-            let center = rect.center();
-            let scale = (rect.width().min(rect.height()) / world_range) * 0.9;
+            // Calculate dynamic viewport based on actual particle positions
+            let (center, scale, world_center_x, world_center_y) = if let Some(ref ctx) = self.ctx_opt {
+                let particle_states = get_particle_states(ctx);
+                
+                if particle_states.is_empty() {
+                    // No particles: use default view
+                    (rect.center(), 1.0, 0.0, 0.0)
+                } else {
+                    // Calculate bounding box of all particles
+                    let mut min_x = f32::INFINITY;
+                    let mut max_x = f32::NEG_INFINITY;
+                    let mut min_y = f32::INFINITY;
+                    let mut max_y = f32::NEG_INFINITY;
+                    
+                    for particle in &particle_states {
+                        min_x = min_x.min(particle.pos.x);
+                        max_x = max_x.max(particle.pos.x);
+                        min_y = min_y.min(particle.pos.y);
+                        max_y = max_y.max(particle.pos.y);
+                    }
+                    
+                    // Add padding (10% on each side, minimum 2.0 units)
+                    let padding = ((max_x - min_x).max(max_y - min_y) * 0.1).max(2.0);
+                    let world_width = (max_x - min_x + 2.0 * padding).max(1.0);
+                    let world_height = (max_y - min_y + 2.0 * padding).max(1.0);
+                    
+                    // Calculate center of bounding box
+                    let world_center_x = (min_x + max_x) / 2.0;
+                    let world_center_y = (min_y + max_y) / 2.0;
+                    
+                    // Calculate scale to fit bounding box in viewport
+                    let scale_x = (rect.width() * 0.9) / world_width;
+                    let scale_y = (rect.height() * 0.9) / world_height;
+                    let scale = scale_x.min(scale_y);
+                    
+                    // Screen center
+                    let screen_center = rect.center();
+                    
+                    (screen_center, scale, world_center_x, world_center_y)
+                }
+            } else {
+                // No context: use default view
+                (rect.center(), 1.0, 0.0, 0.0)
+            };
 
             // Draw springs (forces)
             if let Some(ref ctx) = self.ctx_opt {
@@ -173,10 +212,17 @@ impl eframe::App for VelApp {
                             let pos_a = ctx.world.particles[*a].pos;
                             let pos_b = ctx.world.particles[*b].pos;
 
+                            // Transform world coordinates to screen coordinates
                             let screen_a = center
-                                + egui::vec2(pos_a.x * scale, -pos_a.y * scale);
+                                + egui::vec2(
+                                    (pos_a.x - world_center_x) * scale,
+                                    -(pos_a.y - world_center_y) * scale,
+                                );
                             let screen_b = center
-                                + egui::vec2(pos_b.x * scale, -pos_b.y * scale);
+                                + egui::vec2(
+                                    (pos_b.x - world_center_x) * scale,
+                                    -(pos_b.y - world_center_y) * scale,
+                                );
 
                             painter.line_segment(
                                 [screen_a, screen_b],
@@ -190,8 +236,12 @@ impl eframe::App for VelApp {
                 // Draw particles
                 let particle_states = get_particle_states(ctx);
                 for particle in particle_states {
+                    // Transform world coordinates to screen coordinates
                     let screen_pos = center
-                        + egui::vec2(particle.pos.x * scale, -particle.pos.y * scale);
+                        + egui::vec2(
+                            (particle.pos.x - world_center_x) * scale,
+                            -(particle.pos.y - world_center_y) * scale,
+                        );
 
                     // Particle radius based on mass (with reasonable bounds)
                     let radius = (particle.mass.sqrt() * scale * 0.5).max(3.0).min(20.0);

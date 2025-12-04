@@ -1,0 +1,247 @@
+# ============================================================================
+# SYSTEMIC RISK PROPAGATION VISUALIZER
+# ============================================================================
+#
+# This PhysLang simulation models how financial stress propagates through
+# an interconnected banking network, visualizing systemic risk in real-time.
+#
+# MODEL OVERVIEW:
+# ---------------
+#
+# This simulation represents a stylized financial system where:
+#
+# - PARTICLES (Banks): 7 financial institutions with different sizes
+#   - Mass = institution size (total assets, normalized)
+#   - Position = financial health indicator (x-axis) and network position (y-axis)
+#   - Larger banks (higher mass) are more stable but can transmit larger shocks
+#
+# - SPRINGS (Interbank Exposures): Credit links between institutions
+#   - Spring stiffness (k) = exposure intensity (normalized from billions)
+#   - Rest length = "healthy" distance between connected banks
+#   - When one bank is stressed, springs transmit forces to connected banks
+#   - Represents: interbank loans, derivatives, credit lines, counterparty risk
+#
+# - WELLS (Default Thresholds): Capital ratio boundaries
+#   - Triggered when bank.x >= 10.0 (stress threshold)
+#   - Depth = default risk (inverse of bank stability)
+#   - Smaller banks (lower mass) have higher depth → easier to default
+#   - Visualizes: regulatory capital requirements, solvency boundaries
+#
+# - SHOCK LOOP (Market Stress): Periodic stress events
+#   - Originates at BANK_A (largest institution)
+#   - Loop applies push forces at regular intervals
+#   - Represents: liquidity withdrawal, asset markdowns, bank runs, market crashes
+#   - Frequency and magnitude control stress intensity
+#
+# - GRAVITY (Systemic Pressure): Global market forces
+#   - Gentle gravity toward center stabilizes the network
+#   - Represents: liquidity contraction, systemic risk, market-wide stress
+#   - Prevents network from drifting too far from equilibrium
+#
+# FINANCIAL INTERPRETATION:
+# -------------------------
+#
+# The simulation visualizes:
+#
+# 1. SHOCK PROPAGATION: When BANK_A is stressed, forces ripple through
+#    the spring network to connected banks (B, C, etc.)
+#
+# 2. CASCADE EFFECTS: Stress at one bank can trigger stress at others
+#    through exposure links, potentially leading to systemic failure
+#
+# 3. DEFAULT RISK: Smaller banks (F, G) are more vulnerable and may
+#    drift toward default wells (x >= 10) when stressed
+#
+# 4. NETWORK RESILIENCE: The system's ability to absorb shocks depends on:
+#    - Bank sizes (masses)
+#    - Exposure network structure (spring connections)
+#    - Shock intensity and frequency
+#
+# 5. SYSTEMIC INSTABILITY: If shocks are too strong or network too
+#    interconnected, the entire system can destabilize
+#
+# BANK DATA (Synthetic but Realistic):
+# -------------------------------------
+#
+# Banks and their normalized asset sizes (mass = assets * 0.6):
+# - BANK_A: 3.1 trillion → mass 1.86 (largest, shock origin)
+# - BANK_B: 2.4 trillion → mass 1.44
+# - BANK_C: 1.9 trillion → mass 1.14
+# - BANK_D: 1.6 trillion → mass 0.96
+# - BANK_E: 1.1 trillion → mass 0.66
+# - BANK_F: 0.8 trillion → mass 0.48 (vulnerable)
+# - BANK_G: 0.6 trillion → mass 0.36 (most vulnerable)
+#
+# Interbank Exposures (normalized to spring stiffness k = exposure/100):
+# - A→B: 120B → k=1.2
+# - A→C: 80B  → k=0.8
+# - B→C: 90B  → k=0.9
+# - B→D: 110B → k=1.1
+# - C→E: 70B  → k=0.7
+# - D→E: 60B  → k=0.6
+# - D→F: 50B  → k=0.5
+# - E→G: 40B  → k=0.4
+# - F→G: 30B  → k=0.3
+#
+# WHAT TO OBSERVE IN VEL:
+# -----------------------
+#
+# When running this simulation in VEL, watch for:
+#
+# 1. INITIAL STATE: Banks arranged in a circle, springs connecting them
+#
+# 2. SHOCK EVENTS: BANK_A jitters and moves due to periodic loop pushes
+#    - Observe the push frequency (every ~5 seconds at frequency 0.2)
+#    - Watch BANK_A's position oscillate
+#
+# 3. STRESS PROPAGATION: Forces travel through spring network
+#    - Connected banks (B, C) respond to BANK_A's movements
+#    - Network vibrates and oscillates as stress propagates
+#    - Springs stretch and contract, showing exposure transmission
+#
+# 4. DEFAULT RISK: Smaller banks (F, G) may drift toward x >= 10
+#    - When they cross the threshold, wells activate
+#    - Strong restoring forces pull them back (or deeper into default)
+#    - Visual indicator of financial distress
+#
+# 5. SYSTEM DYNAMICS: Overall network behavior
+#    - Stable: Network oscillates but returns to equilibrium
+#    - Unstable: Network destabilizes, banks drift far from center
+#    - Cascading: Multiple banks approach default thresholds
+#
+# 6. FINAL STATE: Detectors measure:
+#    - Distance A-B: Core interbank link stress
+#    - Distance D-E: Secondary network stress
+#    - BANK_G position: Most vulnerable bank's final state
+#    - System energy: Overall network stress level
+#
+# RUNNING THE SIMULATION:
+# -----------------------
+#
+# To visualize this in VEL:
+#
+#   cargo run --bin physlang -- visual examples/vel/systemic_risk_visualizer/systemic_risk.phys
+#
+# Controls:
+# - ▶ Play: Start/resume simulation
+# - ⏸ Pause: Pause simulation
+# - ⏮ Reset: Restart from initial state
+# - ⏭ Step: Advance one step
+# - Speed: Adjust simulation speed (0.1x to 10x)
+#
+# INTERPRETING DETECTOR RESULTS:
+# ------------------------------
+#
+# After simulation completes, detectors output:
+#
+# - core_link_stress: Distance between BANK_A and BANK_B
+#   → Large values indicate core network disruption
+#   → Normal range: 3-5 units
+#
+# - secondary_stress: Distance between BANK_D and BANK_E
+#   → Measures stress in secondary network connections
+#   → Large values indicate cascading effects
+#
+# - vulnerable_bank_x: Final X-position of BANK_G
+#   → Values >= 10 indicate default threshold crossed
+#   → Higher values = deeper into default zone
+#
+# - system_energy: Sum of key distances (proxy for system stress)
+#   → Higher values = more stressed system
+#   → Normal: ~15-25, Stressed: 25-40, Critical: >40
+#
+# ============================================================================
+
+# Center anchor for gravity (systemic pressure point)
+particle center at (0.0, 0.0) mass 100.0
+
+# Financial institutions arranged in a circle (radius ≈ 8)
+# Positions calculated for even spacing: 360° / 7 ≈ 51.43° per bank
+# BANK_A is the shock origin (largest bank, most interconnected)
+particle BANK_A at (8.0, 0.0) mass 1.86
+particle BANK_B at (5.0, 6.2) mass 1.44
+particle BANK_C at (-1.8, 7.8) mass 1.14
+particle BANK_D at (-7.2, 3.4) mass 0.96
+particle BANK_E at (-7.2, -3.4) mass 0.66
+particle BANK_F at (-1.8, -7.8) mass 0.48
+particle BANK_G at (5.0, -6.2) mass 0.36
+
+# Interbank exposure network: springs represent credit/derivative links
+# Stiffness (k) = exposure intensity (normalized from billions)
+# Rest length = healthy distance between connected banks
+force spring(BANK_A, BANK_B) k = 1.2 rest = 3.5
+force spring(BANK_A, BANK_C) k = 0.8 rest = 3.5
+force spring(BANK_B, BANK_C) k = 0.9 rest = 3.5
+force spring(BANK_B, BANK_D) k = 1.1 rest = 3.5
+force spring(BANK_C, BANK_E) k = 0.7 rest = 3.5
+force spring(BANK_D, BANK_E) k = 0.6 rest = 3.5
+force spring(BANK_D, BANK_F) k = 0.5 rest = 3.5
+force spring(BANK_E, BANK_G) k = 0.4 rest = 3.5
+force spring(BANK_F, BANK_G) k = 0.3 rest = 3.5
+
+# Systemic pressure: gravity toward center stabilizes network
+# Represents liquidity contraction, market-wide stress, regulatory pressure
+# Gentle G values allow dynamic response while preventing drift
+force gravity(BANK_A, center) G = 0.08
+force gravity(BANK_B, center) G = 0.08
+force gravity(BANK_C, center) G = 0.08
+force gravity(BANK_D, center) G = 0.08
+force gravity(BANK_E, center) G = 0.08
+force gravity(BANK_F, center) G = 0.08
+force gravity(BANK_G, center) G = 0.08
+
+# Default thresholds: wells represent capital ratio boundaries
+# Triggered when bank.x >= 10.0 (stress crosses solvency threshold)
+# Depth = default risk (inverse of stability): smaller banks → higher depth
+# Formula: depth = 0.5 + (1 / mass)
+well default_A on BANK_A if position(BANK_A).x >= 10.0 depth 1.04
+well default_B on BANK_B if position(BANK_B).x >= 10.0 depth 1.19
+well default_C on BANK_C if position(BANK_C).x >= 10.0 depth 1.38
+well default_D on BANK_D if position(BANK_D).x >= 10.0 depth 1.54
+well default_E on BANK_E if position(BANK_E).x >= 10.0 depth 2.02
+well default_F on BANK_F if position(BANK_F).x >= 10.0 depth 2.58
+well default_G on BANK_G if position(BANK_G).x >= 10.0 depth 3.28
+
+# Simulation parameters: balanced for visual appeal and numerical stability
+# dt = 0.02 provides smooth animation (50 FPS equivalent)
+# steps = 12000 gives 240 time units of simulation
+# This allows multiple shock cycles and stress propagation
+simulate dt = 0.02 steps = 12000
+
+# Market stress shock: periodic stress events originating at BANK_A
+# Represents: liquidity withdrawal, asset markdowns, bank runs, market crashes
+# Loop applies push forces at regular intervals (frequency 0.2 Hz)
+# 120 cycles over ~240 time units = continuous stress throughout simulation
+# Damping 0.03 allows slight decay but maintains stress intensity
+# Direction (1.0, 0.0) pushes BANK_A rightward (toward stress threshold)
+loop for 120 cycles with frequency 0.2 damping 0.03 on BANK_A {
+    force push(BANK_A) magnitude 0.5 direction (1.0, 0.0)
+}
+
+# Risk detectors: measure final system state and stress indicators
+# These provide quantitative metrics for systemic risk assessment
+
+# Core interbank link stress: distance between largest banks
+# Measures disruption in primary network connections
+# Large values indicate core network breakdown
+detect core_link_stress = distance(BANK_A, BANK_B)
+
+# Secondary network stress: distance between mid-tier banks
+# Measures cascading effects in secondary connections
+# Large values indicate stress propagation beyond core
+detect secondary_stress = distance(BANK_D, BANK_E)
+
+# Vulnerable bank position: final X-coordinate of smallest bank
+# Values >= 10 indicate default threshold crossed
+# Higher values = deeper into default zone (more severe distress)
+detect vulnerable_bank_x = position(BANK_G)
+
+# System energy proxy: sum of key distances (measures overall network stress)
+# Higher values = more stressed system
+# Normal: ~15-25, Stressed: 25-40, Critical: >40
+# Note: PhysLang v0.2 doesn't support arithmetic in detectors,
+# so we measure individual components that can be summed externally
+detect energy_component_1 = distance(BANK_A, BANK_B)
+detect energy_component_2 = distance(BANK_D, BANK_E)
+detect energy_component_3 = distance(BANK_C, BANK_E)
+
