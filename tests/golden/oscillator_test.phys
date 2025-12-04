@@ -1,0 +1,11 @@
+# Oscillator test for golden snapshot
+particle a at (0.0, 0.0) mass 1.0
+particle b at (3.0, 0.0) mass 1.0
+
+force spring(a, b) k = 10.0 rest = 2.0
+
+simulate dt = 0.01 steps = 1000
+
+detect pos_a = position(a)
+detect dist_ab = distance(a, b)
+

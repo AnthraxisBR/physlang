@@ -9,6 +9,7 @@ use crate::loops::{
     LoopBodyRuntime, LoopInstance, LoopKindRuntime, ObservableRuntime, WellInstance,
 };
 use crate::parser::parse_program;
+use crate::diagnostics::Diagnostics;
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -30,6 +31,9 @@ pub struct SimulationContext {
     pub world: World,
     pub loops: Vec<LoopInstance>,
     pub wells: Vec<WellInstance>,
+    pub dt: f32,
+    pub max_steps: usize,
+    pub current_step: usize,
 }
 
 /// Main entry point: parse and run a PhysLang program
@@ -70,7 +74,7 @@ pub fn run_program(source: &str) -> Result<SimulationResult, Box<dyn std::error:
 }
 
 /// Build simulation context from a parsed Program
-fn build_simulation_context(program: &Program) -> Result<SimulationContext, Box<dyn std::error::Error>> {
+pub fn build_simulation_context(program: &Program) -> Result<SimulationContext, Box<dyn std::error::Error>> {
     let mut world = World::new();
     let mut name_to_idx: HashMap<String, usize> = HashMap::new();
 
@@ -122,6 +126,9 @@ fn build_simulation_context(program: &Program) -> Result<SimulationContext, Box<
         world,
         loops,
         wells,
+        dt: program.simulate.dt,
+        max_steps: program.simulate.steps,
+        current_step: 0,
     })
 }
 
@@ -322,4 +329,80 @@ pub fn evaluate_detectors(
     }
 
     Ok(results)
+}
+
+// ============================================================================
+// VEL (Visual Evaluation Loop) API - v0.5
+// ============================================================================
+
+/// Particle state for visualization
+#[derive(Debug, Clone)]
+pub struct ParticleState {
+    pub name: String,
+    pub pos: Vec2,
+    pub mass: f32,
+}
+
+/// Build simulation context from source code, returning diagnostics
+pub fn build_simulation_context_from_source(
+    source: &str,
+) -> Result<(SimulationContext, Diagnostics), Box<dyn std::error::Error>> {
+    let program = parse_program(source)?;
+    
+    // Perform static analysis
+    let diagnostics = analyze_program(&program);
+    
+    // If there are errors, return them
+    if diagnostics.has_errors() {
+        return Err(format!(
+            "Static analysis errors:\n{}",
+            diagnostics
+                .errors()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ).into());
+    }
+    
+    let ctx = build_simulation_context(&program)?;
+    Ok((ctx, diagnostics))
+}
+
+/// Step the simulation forward by one step
+/// Returns true if the simulation is finished (current_step >= max_steps)
+pub fn step_simulation(ctx: &mut SimulationContext) -> bool {
+    if ctx.current_step >= ctx.max_steps {
+        return true;
+    }
+
+    // 1. Update loops (advance oscillators, fire iterations)
+    update_and_apply_loops(&mut ctx.loops, &mut ctx.world.particles, ctx.dt);
+
+    // 2. Apply wells (convert wells into forces/accelerations)
+    apply_wells(&ctx.wells, &mut ctx.world.particles, ctx.dt);
+
+    // 3. Integrate physics
+    step(&mut ctx.world, ctx.dt);
+
+    // 4. Evaluate while-loop conditions to deactivate finished loops
+    evaluate_loop_conditions(&mut ctx.loops, &ctx.world.particles);
+
+    // 5. Increment step counter
+    ctx.current_step += 1;
+
+    // Return true if finished
+    ctx.current_step >= ctx.max_steps
+}
+
+/// Get particle states for visualization
+pub fn get_particle_states(ctx: &SimulationContext) -> Vec<ParticleState> {
+    ctx.world
+        .particles
+        .iter()
+        .map(|p| ParticleState {
+            name: p.name.clone(),
+            pos: p.pos,
+            mass: p.mass,
+        })
+        .collect()
 }

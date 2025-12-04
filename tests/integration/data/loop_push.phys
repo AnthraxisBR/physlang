@@ -1,0 +1,11 @@
+# Loop pushes particle multiple times
+particle a at (0.0, 0.0) mass 1.0
+
+simulate dt = 0.01 steps = 1000
+
+loop for 5 cycles with frequency 1.0 damping 0.0 on a {
+    force push(a) magnitude 0.5 direction (1.0, 0.0)
+}
+
+detect a_x = position(a)
+

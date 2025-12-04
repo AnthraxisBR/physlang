@@ -1,0 +1,11 @@
+# While-loop stops when threshold reached
+particle a at (0.0, 0.0) mass 1.0
+
+simulate dt = 0.01 steps = 5000
+
+loop while position(a).x < 3.0 with frequency 1.0 damping 0.0 on a {
+    force push(a) magnitude 0.3 direction (1.0, 0.0)
+}
+
+detect a_x = position(a)
+

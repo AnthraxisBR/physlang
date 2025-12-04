@@ -1,0 +1,7 @@
+# Invalid loop syntax
+particle a at (0.0, 0.0) mass 1.0
+simulate dt = 0.01 steps = 100
+loop invalid syntax here {
+    force push(a) magnitude 1.0 direction (1.0, 0.0)
+}
+

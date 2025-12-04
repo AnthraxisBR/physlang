@@ -1,0 +1,12 @@
+# Spring equilibrium test for golden snapshot
+particle a at (0.0, 0.0) mass 1.0
+particle b at (5.0, 0.0) mass 1.0
+
+force spring(a, b) k = 5.0 rest = 3.0
+
+simulate dt = 0.01 steps = 5000
+
+detect pos_a = position(a)
+detect pos_b = position(b)
+detect dist_ab = distance(a, b)
+

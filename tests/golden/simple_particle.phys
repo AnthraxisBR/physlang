@@ -1,0 +1,7 @@
+# Simple particle test for golden snapshot
+particle a at (0.0, 0.0) mass 1.0
+
+simulate dt = 0.01 steps = 100
+
+detect pos_a = position(a)
+

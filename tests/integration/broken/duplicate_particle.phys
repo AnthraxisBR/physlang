@@ -1,0 +1,5 @@
+# Duplicate particle name
+particle a at (0.0, 0.0) mass 1.0
+particle a at (5.0, 0.0) mass 2.0
+simulate dt = 0.01 steps = 100
+

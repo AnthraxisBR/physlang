@@ -1,0 +1,21 @@
+# Force-directed graph layout (5 nodes)
+particle node1 at (0.0, 0.0) mass 1.0
+particle node2 at (1.0, 0.0) mass 1.0
+particle node3 at (0.0, 1.0) mass 1.0
+particle node4 at (1.0, 1.0) mass 1.0
+particle node5 at (0.5, 0.5) mass 1.0
+
+force spring(node1, node2) k = 1.0 rest = 1.0
+force spring(node2, node3) k = 1.0 rest = 1.414
+force spring(node3, node4) k = 1.0 rest = 1.0
+force spring(node4, node1) k = 1.0 rest = 1.414
+force spring(node5, node1) k = 1.0 rest = 0.707
+force spring(node5, node2) k = 1.0 rest = 0.707
+force spring(node5, node3) k = 1.0 rest = 0.707
+force spring(node5, node4) k = 1.0 rest = 0.707
+
+simulate dt = 0.01 steps = 2000
+
+detect pos_node1 = position(node1)
+detect dist_12 = distance(node1, node2)
+
