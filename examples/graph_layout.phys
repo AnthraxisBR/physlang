@@ -1,0 +1,63 @@
+# Force-Directed Graph Layout Example
+# 
+# This example demonstrates how PhysLang can be used to compute a force-directed
+# graph layout using only particles, springs, and gravity.
+#
+# Graph structure:
+#   Nodes: A, B, C, D, E
+#   Edges: (A-B), (A-C), (B-D), (C-D), (C-E)
+#
+# Algorithm:
+#   - Each graph node is represented as a particle
+#   - Each graph edge is represented as a spring force
+#   - A heavy center particle provides gravity to keep the layout centered
+#   - The simulation runs until the forces reach equilibrium
+#   - Final positions approximate an optimal graph layout
+
+# Center particle: heavy anchor to keep graph from drifting
+particle center at (0.0, 0.0) mass 100.0
+
+# Graph nodes: initially positioned in a rough circle/grid pattern
+particle A at (5.0, 0.0) mass 1.0
+particle B at (0.0, 5.0) mass 1.0
+particle C at (-5.0, 0.0) mass 1.0
+particle D at (0.0, -5.0) mass 1.0
+particle E at (8.0, 3.0) mass 1.0
+
+# Spring forces: one for each graph edge
+# These pull connected nodes together while maintaining a preferred distance
+force spring(A, B) k = 2.0 rest = 3.0
+force spring(A, C) k = 2.0 rest = 3.0
+force spring(B, D) k = 2.0 rest = 3.0
+force spring(C, D) k = 2.0 rest = 3.0
+force spring(C, E) k = 2.0 rest = 3.0
+
+# Gravity forces: pull each node toward the center
+# This prevents the graph from drifting away and helps maintain compactness
+force gravity(A, center) G = 0.2
+force gravity(B, center) G = 0.2
+force gravity(C, center) G = 0.2
+force gravity(D, center) G = 0.2
+force gravity(E, center) G = 0.2
+
+# Simulation: run until forces reach approximate equilibrium
+# The graph will "relax" into a layout that minimizes spring energy
+# while staying centered due to gravity
+simulate dt = 0.01 steps = 10000
+
+# Detectors: extract final positions and distances
+# Note: v0.1 only supports x-coordinates for position detectors
+# In future versions, full 2D position extraction will be available
+detect A_x = position(A)
+detect B_x = position(B)
+detect C_x = position(C)
+detect D_x = position(D)
+detect E_x = position(E)
+
+# Distance detectors: verify that connected nodes maintain reasonable spacing
+detect dist_AB = distance(A, B)
+detect dist_AC = distance(A, C)
+detect dist_BD = distance(B, D)
+detect dist_CD = distance(C, D)
+detect dist_CE = distance(C, E)
+

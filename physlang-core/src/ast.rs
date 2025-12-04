@@ -7,6 +7,8 @@ pub struct Program {
     pub forces: Vec<ForceDecl>,
     pub simulate: SimulateDecl,
     pub detectors: Vec<DetectorDecl>,
+    pub loops: Vec<LoopDecl>,      // v0.2
+    pub wells: Vec<WellDecl>,       // v0.2
 }
 
 /// Particle declaration: `particle name at (x, y) mass m`
@@ -51,4 +53,68 @@ pub struct DetectorDecl {
 pub enum DetectorKind {
     Position(String), // particle name
     Distance { a: String, b: String },
+}
+
+// ============================================================================
+// v0.2: Loops and Wells
+// ============================================================================
+
+/// Loop declaration
+#[derive(Debug, Clone)]
+pub struct LoopDecl {
+    pub name: Option<String>,         // optional loop label, v0.2 can ignore
+    pub kind: LoopKind,
+    pub body: Vec<LoopBodyStmt>,      // list of actions applied at each iteration
+}
+
+/// Loop kinds
+#[derive(Debug, Clone)]
+pub enum LoopKind {
+    ForCycles {
+        cycles: u32,
+        frequency: f32,
+        damping: f32,
+        target: String, // particle name
+    },
+    WhileCondition {
+        condition: ConditionExpr,
+        frequency: f32,
+        damping: f32,
+        target: String, // particle name
+    },
+}
+
+/// Loop body statements (v0.2, minimal)
+#[derive(Debug, Clone)]
+pub enum LoopBodyStmt {
+    ForcePush {
+        particle: String,
+        magnitude: f32,
+        direction: Vec2,
+    },
+}
+
+/// Condition expressions for while-loops
+#[derive(Debug, Clone)]
+pub enum ConditionExpr {
+    LessThan(ObservableExpr, f32),
+    GreaterThan(ObservableExpr, f32),
+}
+
+/// Observable expressions (positions, distances)
+#[derive(Debug, Clone)]
+pub enum ObservableExpr {
+    PositionX(String),          // position(a).x
+    PositionY(String),          // position(a).y
+    Distance(String, String),   // distance(a,b)
+}
+
+/// Potential well declaration
+#[derive(Debug, Clone)]
+pub struct WellDecl {
+    pub name: String,
+    pub particle: String,
+    pub observable: ObservableExpr, // typically PositionX(ident)
+    pub threshold: f32,
+    pub depth: f32,
 }
