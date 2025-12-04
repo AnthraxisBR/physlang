@@ -1,0 +1,14 @@
+# For-loop example: push particle multiple times
+# This demonstrates oscillator-based iteration
+
+particle a at (0.0, 0.0) mass 1.0
+
+simulate dt = 0.01 steps = 5000
+
+# Loop for 10 cycles, each cycle pushes particle to the right
+loop for 10 cycles with frequency 1.0 damping 0.0 on a {
+    force push(a) magnitude 0.5 direction (1.0, 0.0)
+}
+
+detect a_x = position(a)
+

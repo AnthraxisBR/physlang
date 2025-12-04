@@ -1,0 +1,17 @@
+# While-loop with potential well example
+# Particle is pushed until it reaches threshold, then captured by well
+
+particle a at (0.0, 0.0) mass 1.0
+
+# Potential well: when particle reaches x >= 5.0, it's pulled toward that position
+well target on a if position(a).x >= 5.0 depth 10.0
+
+simulate dt = 0.01 steps = 8000
+
+# While-loop: push particle right until it reaches x >= 5.0
+loop while position(a).x < 5.0 with frequency 1.0 damping 0.0 on a {
+    force push(a) magnitude 0.3 direction (1.0, 0.0)
+}
+
+detect a_x = position(a)
+
