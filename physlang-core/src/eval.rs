@@ -3,7 +3,7 @@
 //! This module evaluates expressions to concrete f32 values before simulation.
 
 use crate::ast::{BinaryOp, Expr, FuncName, LetDecl};
-use crate::diagnostics::{Diagnostic, Span};
+use crate::diagnostics::Diagnostic;
 use std::collections::HashMap;
 
 /// Evaluation context storing variable values
@@ -23,6 +23,35 @@ impl<'a> EvalContext<'a> {
 impl<'a> Default for EvalContext<'a> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Function execution context with local variables and parameters
+pub struct FunctionEvalContext<'a> {
+    /// Global let bindings
+    pub global: &'a EvalContext<'a>,
+    /// Function parameters
+    pub params: HashMap<String, f32>,
+    /// Local let bindings within the function
+    pub local_lets: HashMap<String, f32>,
+}
+
+impl<'a> FunctionEvalContext<'a> {
+    pub fn new(global: &'a EvalContext<'a>) -> Self {
+        Self {
+            global,
+            params: HashMap::new(),
+            local_lets: HashMap::new(),
+        }
+    }
+    
+    /// Look up a variable: local lets -> params -> global lets
+    pub fn lookup(&self, name: &str) -> Option<f32> {
+        self.local_lets
+            .get(name)
+            .or_else(|| self.params.get(name))
+            .or_else(|| self.global.values.get(name))
+            .copied()
     }
 }
 
@@ -88,26 +117,43 @@ pub fn evaluate_lets<'a>(
     (ctx, diagnostics)
 }
 
-/// Evaluate an expression to a f32 value
+/// Evaluate an expression to a f32 value (global context)
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<f32, EvalError> {
+    eval_expr_with_function_ctx(expr, ctx, None)
+}
+
+/// Evaluate an expression with optional function context
+pub fn eval_expr_with_function_ctx(
+    expr: &Expr,
+    global_ctx: &EvalContext<'_>,
+    func_ctx: Option<&FunctionEvalContext<'_>>,
+) -> Result<f32, EvalError> {
     match expr {
         Expr::Literal(v) => Ok(*v),
         
         Expr::Var(name) => {
-            ctx.values
-                .get(name.as_str())
-                .copied()
-                .ok_or_else(|| EvalError::UnknownVar(name.clone()))
+            // Look up in function context first, then global
+            if let Some(func_ctx) = func_ctx {
+                func_ctx
+                    .lookup(name)
+                    .ok_or_else(|| EvalError::UnknownVar(name.clone()))
+            } else {
+                global_ctx
+                    .values
+                    .get(name.as_str())
+                    .copied()
+                    .ok_or_else(|| EvalError::UnknownVar(name.clone()))
+            }
         }
         
         Expr::UnaryMinus(e) => {
-            let v = eval_expr(e, ctx)?;
+            let v = eval_expr_with_function_ctx(e, global_ctx, func_ctx)?;
             Ok(-v)
         }
         
         Expr::Binary { op, left, right } => {
-            let left_val = eval_expr(left, ctx)?;
-            let right_val = eval_expr(right, ctx)?;
+            let left_val = eval_expr_with_function_ctx(left, global_ctx, func_ctx)?;
+            let right_val = eval_expr_with_function_ctx(right, global_ctx, func_ctx)?;
             
             match op {
                 BinaryOp::Add => Ok(left_val + right_val),
@@ -125,7 +171,7 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<f32, EvalError> {
         Expr::Call { func, args } => {
             let arg_values: Result<Vec<f32>, EvalError> = args
                 .iter()
-                .map(|arg| eval_expr(arg, ctx))
+                .map(|arg| eval_expr_with_function_ctx(arg, global_ctx, func_ctx))
                 .collect();
             let arg_values = arg_values?;
             

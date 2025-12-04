@@ -1,16 +1,17 @@
 use crate::analyzer::analyze_program;
 use crate::ast::{
-    ConditionExpr, DetectorKind, Expr, ForceKind, LoopKind, ObservableExpr, Program,
+    ConditionExpr, DetectorKind, ForceKind, LoopKind, ObservableExpr, Program,
 };
 use crate::engine::{Force, Particle, World};
-use crate::eval::{eval_expr, evaluate_lets, EvalContext, EvalError};
+use crate::eval::{eval_expr, evaluate_lets, EvalContext};
+use crate::functions::execute_functions;
 use crate::integrator::step;
 use crate::loops::{
     apply_wells, evaluate_loop_conditions, update_and_apply_loops, ConditionRuntime,
     LoopBodyRuntime, LoopInstance, LoopKindRuntime, ObservableRuntime, WellInstance,
 };
 use crate::parser::parse_program;
-use crate::diagnostics::{Diagnostic, Diagnostics};
+use crate::diagnostics::Diagnostics;
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -39,7 +40,7 @@ pub struct SimulationContext {
 
 /// Main entry point: parse and run a PhysLang program
 pub fn run_program(source: &str) -> Result<SimulationResult, Box<dyn std::error::Error>> {
-    let program = parse_program(source)?;
+    let mut program = parse_program(source)?;
     
     // Perform static analysis
     let diagnostics = analyze_program(&program);
@@ -51,8 +52,9 @@ pub fn run_program(source: &str) -> Result<SimulationResult, Box<dyn std::error:
         return Err(format!("Static analysis errors:\n{}", error_messages.join("\n")).into());
     }
     
-    // Evaluate let bindings
-    let (eval_ctx, eval_diagnostics) = evaluate_lets(&program.lets);
+    // Evaluate let bindings (borrow ends here)
+    let lets = program.lets.clone();
+    let (eval_ctx, eval_diagnostics) = evaluate_lets(&lets);
     if eval_diagnostics.iter().any(|d| matches!(d.severity, crate::diagnostics::DiagnosticSeverity::Error)) {
         let error_messages: Vec<String> = eval_diagnostics
             .iter()
@@ -60,6 +62,27 @@ pub fn run_program(source: &str) -> Result<SimulationResult, Box<dyn std::error:
             .map(|d| d.message.clone())
             .collect();
         return Err(format!("Expression evaluation errors:\n{}", error_messages.join("\n")).into());
+    }
+    
+    // Execute functions to generate world-building statements
+    let func_diagnostics = execute_functions(&mut program, &eval_ctx);
+    if func_diagnostics.iter().any(|d| matches!(d.severity, crate::diagnostics::DiagnosticSeverity::Error)) {
+        let error_messages: Vec<String> = func_diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, crate::diagnostics::DiagnosticSeverity::Error))
+            .map(|d| d.message.clone())
+            .collect();
+        return Err(format!("Function execution errors:\n{}", error_messages.join("\n")).into());
+    }
+    
+    // Re-analyze program after function execution to validate generated world
+    let post_func_diagnostics = analyze_program(&program);
+    if post_func_diagnostics.has_errors() {
+        let error_messages: Vec<String> = post_func_diagnostics
+            .errors()
+            .map(|d| d.message.clone())
+            .collect();
+        return Err(format!("Post-function analysis errors:\n{}", error_messages.join("\n")).into());
     }
     
     let mut ctx = build_simulation_context(&program, &eval_ctx)?;
@@ -450,7 +473,7 @@ pub fn evaluate_detectors(
 }
 
 // ============================================================================
-// VEL (Visual Evaluation Loop) API - v0.5
+// VEL (Visual Evaluation Loop) API - v0.5+
 // ============================================================================
 
 /// Particle state for visualization
@@ -465,7 +488,7 @@ pub struct ParticleState {
 pub fn build_simulation_context_from_source(
     source: &str,
 ) -> Result<(SimulationContext, Diagnostics), Box<dyn std::error::Error>> {
-    let program = parse_program(source)?;
+    let mut program = parse_program(source)?;
     
     // Perform static analysis
     let mut diagnostics = analyze_program(&program);
@@ -482,14 +505,47 @@ pub fn build_simulation_context_from_source(
         ).into());
     }
     
-    // Evaluate let bindings
-    let (eval_ctx, eval_diagnostics) = evaluate_lets(&program.lets);
+    // Evaluate let bindings (clone to avoid borrow conflict)
+    let lets = program.lets.clone();
+    let (eval_ctx, eval_diagnostics) = evaluate_lets(&lets);
     diagnostics.extend(eval_diagnostics.into());
     
     // If there are evaluation errors, return them
     if diagnostics.has_errors() {
         return Err(format!(
             "Expression evaluation errors:\n{}",
+            diagnostics
+                .errors()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ).into());
+    }
+    
+    // Execute functions to generate world-building statements
+    let func_diagnostics = execute_functions(&mut program, &eval_ctx);
+    diagnostics.extend(func_diagnostics.into());
+    
+    // If there are function execution errors, return them
+    if diagnostics.has_errors() {
+        return Err(format!(
+            "Function execution errors:\n{}",
+            diagnostics
+                .errors()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ).into());
+    }
+    
+    // Re-analyze program after function execution
+    let post_func_diagnostics = analyze_program(&program);
+    diagnostics.extend(post_func_diagnostics.into());
+    
+    // If there are post-function analysis errors, return them
+    if diagnostics.has_errors() {
+        return Err(format!(
+            "Post-function analysis errors:\n{}",
             diagnostics
                 .errors()
                 .map(|d| d.message.clone())

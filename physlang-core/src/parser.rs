@@ -1,10 +1,9 @@
 use crate::ast::{
     BinaryOp, ConditionExpr, DetectorDecl, DetectorKind, Expr, ForceDecl, ForceKind, FuncName,
-    LetDecl, LoopBodyStmt, LoopDecl, LoopKind, ObservableExpr, ParticleDecl, Program,
-    SimulateDecl, WellDecl,
+    FunctionDecl, LetDecl, LoopBodyStmt, LoopDecl, LoopKind, ObservableExpr, ParticleDecl,
+    Program, SimulateDecl, Stmt, WellDecl,
 };
 use crate::diagnostics::Span;
-use glam::Vec2;
 use thiserror::Error;
 
 /// Parse error with optional span information
@@ -89,6 +88,8 @@ impl ParseContext {
 pub fn parse_program(source: &str) -> Result<Program, ParseError> {
     let ctx = ParseContext::new(source);
     let mut lets = Vec::new();
+    let mut functions = Vec::new();
+    let mut top_level_calls = Vec::new();
     let mut particles = Vec::new();
     let mut forces = Vec::new();
     let mut simulate = None;
@@ -110,6 +111,10 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
         if line.starts_with("let ") {
             lets.push(parse_let(line, Some(line_span))?);
             i += 1;
+        } else if line.starts_with("fn ") {
+            let (func_decl, next_line) = parse_function(&lines, i, &ctx)?;
+            functions.push(func_decl);
+            i = next_line;
         } else if line.starts_with("particle ") {
             particles.push(parse_particle(line, Some(line_span))?);
             i += 1;
@@ -130,6 +135,33 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
             wells.push(parse_well(line, Some(line_span))?);
             i += 1;
         } else {
+            // Try parsing as function call statement
+            if let Some(paren_pos) = line.find('(') {
+                let func_name = line[..paren_pos].trim();
+                if is_valid_identifier(func_name) {
+                    // This looks like a function call
+                    let rest = &line[paren_pos..];
+                    if let Some(paren_end) = rest.find(')') {
+                        let args_str = &rest[1..paren_end];
+                        let args = if args_str.trim().is_empty() {
+                            Vec::new()
+                        } else {
+                            args_str
+                                .split(',')
+                                .map(|arg| parse_expr(arg.trim(), Some(line_span)))
+                                .collect::<Result<Vec<_>, _>>()?
+                        };
+                        // Store top-level function calls for execution
+                        top_level_calls.push(Stmt::ExprCall {
+                            name: func_name.to_string(),
+                            args,
+                        });
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+            
             return Err(ParseError::new(
                 format!("Unexpected token: {}", line.split_whitespace().next().unwrap_or("")),
                 Some(line_span),
@@ -143,6 +175,8 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
 
     Ok(Program {
         lets,
+        functions,
+        top_level_calls,
         particles,
         forces,
         simulate,
@@ -976,4 +1010,275 @@ fn is_valid_identifier(s: &str) -> bool {
     
     // Rest must be alphanumeric or underscore
     chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+// ============================================================================
+// v0.7: Function and Statement Parsing
+// ============================================================================
+
+/// Parse a function declaration: `fn name(params) { body }`
+fn parse_function(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(FunctionDecl, usize), ParseError> {
+    let line = lines[start_idx].trim();
+    let line_span = ctx.full_line_span(start_idx);
+    
+    // Remove "fn " prefix
+    let rest = line.strip_prefix("fn ").ok_or_else(|| {
+        ParseError::new("Expected 'fn' keyword", Some(line_span))
+    })?;
+    
+    // Find opening parenthesis
+    let paren_start = rest.find('(').ok_or_else(|| {
+        ParseError::new(format!("Expected '(' in function declaration: {}", line), Some(line_span))
+    })?;
+    
+    let name = rest[..paren_start].trim().to_string();
+    if !is_valid_identifier(&name) {
+        return Err(ParseError::new(
+            format!("Invalid function name: {}", name),
+            Some(line_span),
+        ));
+    }
+    
+    // Find closing parenthesis
+    let rest = &rest[paren_start + 1..];
+    let paren_end = rest.find(')').ok_or_else(|| {
+        ParseError::new(format!("Expected ')' in function declaration: {}", line), Some(line_span))
+    })?;
+    
+    // Parse parameters
+    let params_str = rest[..paren_end].trim();
+    let params = if params_str.is_empty() {
+        Vec::new()
+    } else {
+        params_str
+            .split(',')
+            .map(|p| {
+                let p = p.trim();
+                if !is_valid_identifier(p) {
+                    return Err(ParseError::new(
+                        format!("Invalid parameter name: {}", p),
+                        Some(line_span),
+                    ));
+                }
+                Ok(p.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    
+    // Check for duplicate parameter names
+    let mut param_set = std::collections::HashSet::new();
+    for param in &params {
+        if !param_set.insert(param) {
+            return Err(ParseError::new(
+                format!("Duplicate parameter name: {}", param),
+                Some(line_span),
+            ));
+        }
+    }
+    
+    // Find opening brace (could be on same line or next line)
+    let after_paren = &rest[paren_end + 1..].trim();
+    let body_start = if after_paren.starts_with('{') {
+        start_idx + 1
+    } else if after_paren.is_empty() {
+        // Opening brace on next line
+        if start_idx + 1 >= lines.len() {
+            return Err(ParseError::new(
+                "Expected '{' after function declaration".to_string(),
+                Some(line_span),
+            ));
+        }
+        let next_line = lines[start_idx + 1].trim();
+        if !next_line.starts_with('{') {
+            return Err(ParseError::new(
+                "Expected '{' after function declaration".to_string(),
+                Some(line_span),
+            ));
+        }
+        start_idx + 2
+    } else {
+        return Err(ParseError::new(
+            format!("Expected '{{' after function declaration: {}", line),
+            Some(line_span),
+        ));
+    };
+    
+    // Parse function body (statements until closing brace)
+    let (body, next_line) = parse_block(lines, body_start, ctx)?;
+    
+    Ok((
+        FunctionDecl {
+            name,
+            params,
+            body,
+        },
+        next_line,
+    ))
+}
+
+/// Parse a block of statements: `{ stmt1 stmt2 ... }`
+fn parse_block(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(Vec<Stmt>, usize), ParseError> {
+    let mut stmts = Vec::new();
+    let mut i = start_idx;
+    let mut brace_count = 0;
+    
+    // Check if we need to skip opening brace
+    if i < lines.len() {
+        let first_line = lines[i].trim();
+        if first_line == "{" || first_line.starts_with("{") {
+            brace_count = 1;
+            if first_line.len() > 1 {
+                // Opening brace with content on same line
+                let after_brace = first_line[1..].trim();
+                if !after_brace.is_empty() && !after_brace.starts_with('#') {
+                    // Try to parse statement on same line
+                    let (stmt, _) = parse_stmt(&[after_brace], 0, ctx)?;
+                    stmts.push(stmt);
+                }
+            }
+            i += 1;
+        }
+    }
+    
+    // Parse statements until closing brace
+    while i < lines.len() && brace_count > 0 {
+        let line = lines[i].trim();
+        
+        if line.is_empty() || line.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        
+        if line == "}" {
+            brace_count -= 1;
+            if brace_count == 0 {
+                i += 1;
+                break;
+            }
+        } else if line.ends_with('{') {
+            brace_count += 1;
+        }
+        
+        if brace_count > 0 {
+            match parse_stmt(lines, i, ctx) {
+                Ok((stmt, next_i)) => {
+                    stmts.push(stmt);
+                    i = next_i;
+                }
+                Err(e) => {
+                    // If it's not a statement, it might be a closing brace
+                    if line == "}" {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            i += 1;
+                            break;
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    
+    if brace_count > 0 {
+        return Err(ParseError::new(
+            "Unclosed function body".to_string(),
+            Some(ctx.full_line_span(start_idx)),
+        ));
+    }
+    
+    Ok((stmts, i))
+}
+
+/// Parse a statement
+fn parse_stmt(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(Stmt, usize), ParseError> {
+    let line = lines[start_idx].trim();
+    let line_span = ctx.full_line_span(start_idx);
+    
+    // Remove semicolon if present (for return statements)
+    let line_no_semi = line.strip_suffix(';').unwrap_or(line).trim();
+    
+    if line_no_semi.starts_with("let ") {
+        let let_decl = parse_let(line_no_semi, Some(line_span))?;
+        Ok((
+            Stmt::Let {
+                name: let_decl.name,
+                expr: let_decl.expr,
+            },
+            start_idx + 1,
+        ))
+    } else if line_no_semi.starts_with("return ") {
+        let expr_str = line_no_semi.strip_prefix("return ").ok_or_else(|| {
+            ParseError::new("Expected 'return' keyword", Some(line_span))
+        })?;
+        let expr = parse_expr(expr_str.trim(), Some(line_span))?;
+        Ok((Stmt::Return(expr), start_idx + 1))
+    } else if line_no_semi.starts_with("particle ") {
+        let particle = parse_particle(line_no_semi, Some(line_span))?;
+        Ok((Stmt::ParticleDecl(particle), start_idx + 1))
+    } else if line_no_semi.starts_with("force ") && !line_no_semi.contains("push") {
+        let force = parse_force(line_no_semi, Some(line_span))?;
+        Ok((Stmt::ForceDecl(force), start_idx + 1))
+    } else if line_no_semi.starts_with("detect ") {
+        let detector = parse_detector(line_no_semi, Some(line_span))?;
+        Ok((Stmt::DetectorDecl(detector), start_idx + 1))
+    } else if line_no_semi.starts_with("well ") {
+        let well = parse_well(line_no_semi, Some(line_span))?;
+        Ok((Stmt::WellDecl(well), start_idx + 1))
+    } else if line_no_semi.starts_with("loop ") {
+        let (loop_decl, next_line) = parse_loop(lines, start_idx, ctx)?;
+        Ok((Stmt::LoopDecl(loop_decl), next_line))
+    } else {
+        // Try parsing as function call: ident(args)
+        if let Some(paren_pos) = line_no_semi.find('(') {
+            let func_name = line_no_semi[..paren_pos].trim();
+            if is_valid_identifier(func_name) {
+                let rest = &line_no_semi[paren_pos..];
+                let paren_end = rest.find(')').ok_or_else(|| {
+                    ParseError::new(
+                        format!("Expected ')' in function call: {}", line),
+                        Some(line_span),
+                    )
+                })?;
+                
+                let args_str = &rest[1..paren_end];
+                let args = if args_str.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    args_str
+                        .split(',')
+                        .map(|arg| parse_expr(arg.trim(), Some(line_span)))
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                
+                return Ok((
+                    Stmt::ExprCall {
+                        name: func_name.to_string(),
+                        args,
+                    },
+                    start_idx + 1,
+                ));
+            }
+        }
+        
+        Err(ParseError::new(
+            format!("Invalid statement: {}", line),
+            Some(line_span),
+        ))
+    }
 }

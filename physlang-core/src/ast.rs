@@ -1,5 +1,3 @@
-use glam::Vec2;
-
 // ============================================================================
 // v0.6: Expressions & Variables
 // ============================================================================
@@ -86,6 +84,7 @@ pub enum Stmt {
 pub struct Program {
     pub lets: Vec<LetDecl>,          // v0.6
     pub functions: Vec<FunctionDecl>, // v0.7
+    pub top_level_calls: Vec<Stmt>,  // v0.7: function calls at top level
     pub particles: Vec<ParticleDecl>,
     pub forces: Vec<ForceDecl>,
     pub simulate: SimulateDecl,

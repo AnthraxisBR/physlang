@@ -1,4 +1,4 @@
-//! Runtime structures and logic for loops and wells (v0.2)
+//! Runtime structures and logic for loops and wells (v0.2+)
 
 use crate::engine::Particle;
 use glam::Vec2;

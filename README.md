@@ -50,6 +50,24 @@ detect a_pos = position(a)
 detect dist_ab = distance(a, b)
 ```
 
+### Example with Expressions and Functions (v0.6+)
+
+```phys
+let base_mass = 2.0
+let spring_k = 1.5
+
+fn make_particle(name, x, y, mass) {
+    particle name at (x, y) mass mass
+}
+
+make_particle("a", 0.0, 0.0, base_mass)
+make_particle("b", 5.0, 0.0, base_mass * 0.8)
+
+force spring("a", "b") k = spring_k * 2.0 rest = 3.0
+
+simulate dt = 0.01 steps = 10000
+```
+
 ## Documentation
 
 Comprehensive documentation is available in the [`docs/`](docs/) directory:
@@ -63,7 +81,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 ## Features
 
-### Current (v0.5)
+### Current (v0.7)
 
 - ✅ Particle declarations with position and mass
 - ✅ Forces: gravity, spring, push (in loops)
@@ -73,6 +91,19 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - ✅ While-loops via physical conditions
 - ✅ Potential wells as conditionals
 - ✅ **Visual Evaluation Loop (VEL)** - Interactive visualization with live editing
+- ✅ **v0.6: Expressions & Variables**
+  - `let` bindings for variables
+  - Expression language with arithmetic operators (+, -, *, /)
+  - Unary minus operator
+  - Built-in functions: `sin`, `cos`, `sqrt`, `clamp`
+  - Expressions in all numeric positions (mass, forces, simulation parameters, etc.)
+- ✅ **v0.7: User-Defined Functions**
+  - Function definitions with parameters
+  - Function calls as statements
+  - Local `let` bindings within functions
+  - Return statements (scalar values)
+  - World-building statements inside functions (particles, forces, loops, wells)
+  - Nested function calls
 
 ### Planned
 
@@ -159,6 +190,9 @@ physlang/
 │   └── src/
 │       ├── ast.rs          # Abstract syntax tree
 │       ├── parser.rs        # Parser implementation
+│       ├── analyzer.rs      # Static analysis and type checking
+│       ├── eval.rs          # Expression evaluation (v0.6+)
+│       ├── functions.rs     # Function execution (v0.7+)
 │       ├── engine.rs        # Physics engine
 │       ├── integrator.rs   # Numerical integrator
 │       ├── loops.rs         # Loop and well runtime
