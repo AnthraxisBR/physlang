@@ -1,4 +1,5 @@
 PAPER.md
+.cursor
 
 # Rust build artifacts
 /target/

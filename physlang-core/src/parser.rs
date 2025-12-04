@@ -2,17 +2,91 @@ use crate::ast::{
     ConditionExpr, DetectorDecl, DetectorKind, ForceDecl, ForceKind, LoopBodyStmt, LoopDecl,
     LoopKind, ObservableExpr, ParticleDecl, Program, SimulateDecl, WellDecl,
 };
+use crate::diagnostics::Span;
 use glam::Vec2;
 use thiserror::Error;
 
+/// Parse error with optional span information
 #[derive(Debug, Error)]
 pub enum ParseError {
-    #[error("Parse error: {0}")]
-    Message(String),
+    #[error("{message}")]
+    SyntaxError {
+        message: String,
+        span: Option<Span>,
+    },
+}
+
+impl ParseError {
+    pub fn new(message: impl Into<String>, span: Option<Span>) -> Self {
+        Self::SyntaxError {
+            message: message.into(),
+            span,
+        }
+    }
+
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::SyntaxError {
+            message: message.into(),
+            span: None,
+        }
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::SyntaxError { span, .. } => *span,
+        }
+    }
+}
+
+/// Helper to track byte offsets while parsing
+struct ParseContext {
+    #[allow(dead_code)]
+    source: String,
+    line_offsets: Vec<usize>, // Byte offset of start of each line
+}
+
+impl ParseContext {
+    fn new(source: &str) -> Self {
+        let mut line_offsets = vec![0];
+        let mut offset = 0;
+        for ch in source.chars() {
+            offset += ch.len_utf8();
+            if ch == '\n' {
+                line_offsets.push(offset);
+            }
+        }
+        Self {
+            source: source.to_string(),
+            line_offsets,
+        }
+    }
+
+    /// Get byte offset for start of line (0-indexed)
+    fn line_start(&self, line: usize) -> usize {
+        self.line_offsets.get(line).copied().unwrap_or(0)
+    }
+
+    /// Create a span for a line
+    #[allow(dead_code)]
+    fn line_span(&self, line: usize, start_col: usize, end_col: usize) -> Span {
+        let line_start = self.line_start(line);
+        Span::new(
+            line_start + start_col,
+            line_start + end_col,
+        )
+    }
+
+    /// Create a span for the entire line
+    fn full_line_span(&self, line: usize) -> Span {
+        let start = self.line_start(line);
+        let end = self.line_start(line + 1);
+        Span::new(start, end)
+    }
 }
 
 /// Parse a PhysLang program from source code
 pub fn parse_program(source: &str) -> Result<Program, ParseError> {
+    let ctx = ParseContext::new(source);
     let mut particles = Vec::new();
     let mut forces = Vec::new();
     let mut simulate = None;
@@ -24,37 +98,42 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i].trim();
+        let line_span = ctx.full_line_span(i);
+        
         if line.is_empty() || line.starts_with('#') {
             i += 1;
             continue;
         }
 
         if line.starts_with("particle ") {
-            particles.push(parse_particle(line)?);
+            particles.push(parse_particle(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("force ") && !line.contains("push") {
-            forces.push(parse_force(line)?);
+            forces.push(parse_force(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("simulate ") {
-            simulate = Some(parse_simulate(line)?);
+            simulate = Some(parse_simulate(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("detect ") {
-            detectors.push(parse_detector(line)?);
+            detectors.push(parse_detector(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("loop ") {
-            let (loop_decl, next_line) = parse_loop(&lines, i)?;
+            let (loop_decl, next_line) = parse_loop(&lines, i, &ctx)?;
             loops.push(loop_decl);
             i = next_line;
         } else if line.starts_with("well ") {
-            wells.push(parse_well(line)?);
+            wells.push(parse_well(line, Some(line_span))?);
             i += 1;
         } else {
-            i += 1;
+            return Err(ParseError::new(
+                format!("Unexpected token: {}", line.split_whitespace().next().unwrap_or("")),
+                Some(line_span),
+            ));
         }
     }
 
     let simulate = simulate.ok_or_else(|| {
-        ParseError::Message("Missing 'simulate' declaration".to_string())
+        ParseError::message("Missing 'simulate' declaration".to_string())
     })?;
 
     Ok(Program {
@@ -68,13 +147,15 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
 }
 
 /// Parse a particle declaration: `particle name at (x, y) mass m`
-fn parse_particle(line: &str) -> Result<ParticleDecl, ParseError> {
+fn parse_particle(line: &str, span: Option<Span>) -> Result<ParticleDecl, ParseError> {
     // Remove "particle " prefix
-    let rest = line.strip_prefix("particle ").unwrap();
+    let rest = line.strip_prefix("particle ").ok_or_else(|| {
+        ParseError::new("Expected 'particle' keyword", span)
+    })?;
     
     // Find " at "
     let at_pos = rest.find(" at ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'at' in particle declaration: {}", line))
+        ParseError::new(format!("Expected 'at' in particle declaration: {}", line), span)
     })?;
     
     let name = rest[..at_pos].trim().to_string();
@@ -82,38 +163,38 @@ fn parse_particle(line: &str) -> Result<ParticleDecl, ParseError> {
     
     // Parse position: (x, y)
     let pos_start = rest.find('(').ok_or_else(|| {
-        ParseError::Message(format!("Expected '(' in position: {}", line))
+        ParseError::new(format!("Expected '(' in position: {}", line), span)
     })?;
     let pos_end = rest.find(')').ok_or_else(|| {
-        ParseError::Message(format!("Expected ')' in position: {}", line))
+        ParseError::new(format!("Expected ')' in position: {}", line), span)
     })?;
     
     let pos_str = &rest[pos_start + 1..pos_end];
     let coords: Vec<&str> = pos_str.split(',').map(|s| s.trim()).collect();
     if coords.len() != 2 {
-        return Err(ParseError::Message(format!(
-            "Expected two coordinates in position: {}",
-            line
-        )));
+        return Err(ParseError::new(
+            format!("Expected two coordinates in position: {}", line),
+            span,
+        ));
     }
     
     let x: f32 = coords[0].parse().map_err(|_| {
-        ParseError::Message(format!("Invalid x coordinate: {}", coords[0]))
+        ParseError::new(format!("Invalid x coordinate: {}", coords[0]), span)
     })?;
     let y: f32 = coords[1].parse().map_err(|_| {
-        ParseError::Message(format!("Invalid y coordinate: {}", coords[1]))
+        ParseError::new(format!("Invalid y coordinate: {}", coords[1]), span)
     })?;
     
     let rest = &rest[pos_end + 1..];
     
     // Parse mass
     let mass_start = rest.find("mass ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'mass' in particle declaration: {}", line))
+        ParseError::new(format!("Expected 'mass' in particle declaration: {}", line), span)
     })?;
     
     let mass_str = &rest[mass_start + 5..].trim();
     let mass: f32 = mass_str.parse().map_err(|_| {
-        ParseError::Message(format!("Invalid mass value: {}", mass_str))
+        ParseError::new(format!("Invalid mass value: {}", mass_str), span)
     })?;
     
     Ok(ParticleDecl {
@@ -124,13 +205,15 @@ fn parse_particle(line: &str) -> Result<ParticleDecl, ParseError> {
 }
 
 /// Parse a force declaration: `force gravity(a, b) G = x` or `force spring(a, b) k = x rest = y`
-fn parse_force(line: &str) -> Result<ForceDecl, ParseError> {
+fn parse_force(line: &str, span: Option<Span>) -> Result<ForceDecl, ParseError> {
     // Remove "force " prefix
-    let rest = line.strip_prefix("force ").unwrap();
+    let rest = line.strip_prefix("force ").ok_or_else(|| {
+        ParseError::new("Expected 'force' keyword", span)
+    })?;
     
     // Find the opening parenthesis
     let paren_start = rest.find('(').ok_or_else(|| {
-        ParseError::Message(format!("Expected '(' in force declaration: {}", line))
+        ParseError::new(format!("Expected '(' in force declaration: {}", line), span)
     })?;
     
     let force_type = rest[..paren_start].trim();
@@ -138,16 +221,16 @@ fn parse_force(line: &str) -> Result<ForceDecl, ParseError> {
     
     // Find closing parenthesis
     let paren_end = rest.find(')').ok_or_else(|| {
-        ParseError::Message(format!("Expected ')' in force declaration: {}", line))
+        ParseError::new(format!("Expected ')' in force declaration: {}", line), span)
     })?;
     
     let args_str = &rest[..paren_end];
     let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
     if args.len() != 2 {
-        return Err(ParseError::Message(format!(
-            "Expected two particle names in force: {}",
-            line
-        )));
+        return Err(ParseError::new(
+            format!("Expected two particle names in force: {}", line),
+            span,
+        ));
     }
     
     let a = args[0].to_string();
@@ -159,40 +242,40 @@ fn parse_force(line: &str) -> Result<ForceDecl, ParseError> {
         "gravity" => {
             // Parse: G = value
             let g_str = rest.strip_prefix("G = ").ok_or_else(|| {
-                ParseError::Message(format!("Expected 'G =' in gravity force: {}", line))
+                ParseError::new(format!("Expected 'G =' in gravity force: {}", line), span)
             })?;
             let g: f32 = g_str.trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid G value: {}", g_str))
+                ParseError::new(format!("Invalid G value: {}", g_str), span)
             })?;
             ForceKind::Gravity { g }
         }
         "spring" => {
             // Parse: k = value rest = value
             let k_start = rest.find("k = ").ok_or_else(|| {
-                ParseError::Message(format!("Expected 'k =' in spring force: {}", line))
+                ParseError::new(format!("Expected 'k =' in spring force: {}", line), span)
             })?;
             let after_k = &rest[k_start + 4..];
             let k_end = after_k.find(" rest = ").ok_or_else(|| {
-                ParseError::Message(format!("Expected 'rest =' in spring force: {}", line))
+                ParseError::new(format!("Expected 'rest =' in spring force: {}", line), span)
             })?;
             
             let k_str = &after_k[..k_end].trim();
             let k: f32 = k_str.parse().map_err(|_| {
-                ParseError::Message(format!("Invalid k value: {}", k_str))
+                ParseError::new(format!("Invalid k value: {}", k_str), span)
             })?;
             
             let rest_str = &after_k[k_end + 8..].trim();
             let rest: f32 = rest_str.parse().map_err(|_| {
-                ParseError::Message(format!("Invalid rest value: {}", rest_str))
+                ParseError::new(format!("Invalid rest value: {}", rest_str), span)
             })?;
             
             ForceKind::Spring { k, rest }
         }
         _ => {
-            return Err(ParseError::Message(format!(
-                "Unknown force type: {}",
-                force_type
-            )));
+            return Err(ParseError::new(
+                format!("Unknown force type: {}", force_type),
+                span,
+            ));
         }
     };
     
@@ -200,40 +283,44 @@ fn parse_force(line: &str) -> Result<ForceDecl, ParseError> {
 }
 
 /// Parse a simulate declaration: `simulate dt = x steps = n`
-fn parse_simulate(line: &str) -> Result<SimulateDecl, ParseError> {
+fn parse_simulate(line: &str, span: Option<Span>) -> Result<SimulateDecl, ParseError> {
     // Remove "simulate " prefix
-    let rest = line.strip_prefix("simulate ").unwrap();
+    let rest = line.strip_prefix("simulate ").ok_or_else(|| {
+        ParseError::new("Expected 'simulate' keyword", span)
+    })?;
     
     // Parse dt = value
     let dt_start = rest.find("dt = ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'dt =' in simulate: {}", line))
+        ParseError::new(format!("Expected 'dt =' in simulate: {}", line), span)
     })?;
     let after_dt = &rest[dt_start + 5..];
     let dt_end = after_dt.find(" steps = ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'steps =' in simulate: {}", line))
+        ParseError::new(format!("Expected 'steps =' in simulate: {}", line), span)
     })?;
     
     let dt_str = &after_dt[..dt_end].trim();
     let dt: f32 = dt_str.parse().map_err(|_| {
-        ParseError::Message(format!("Invalid dt value: {}", dt_str))
+        ParseError::new(format!("Invalid dt value: {}", dt_str), span)
     })?;
     
     let steps_str = &after_dt[dt_end + 9..].trim();
     let steps: usize = steps_str.parse().map_err(|_| {
-        ParseError::Message(format!("Invalid steps value: {}", steps_str))
+        ParseError::new(format!("Invalid steps value: {}", steps_str), span)
     })?;
     
     Ok(SimulateDecl { dt, steps })
 }
 
 /// Parse a detector declaration: `detect name = position(a)` or `detect name = distance(a, b)`
-fn parse_detector(line: &str) -> Result<DetectorDecl, ParseError> {
+fn parse_detector(line: &str, span: Option<Span>) -> Result<DetectorDecl, ParseError> {
     // Remove "detect " prefix
-    let rest = line.strip_prefix("detect ").unwrap();
+    let rest = line.strip_prefix("detect ").ok_or_else(|| {
+        ParseError::new("Expected 'detect' keyword", span)
+    })?;
     
     // Find " = "
     let eq_pos = rest.find(" = ").ok_or_else(|| {
-        ParseError::Message(format!("Expected '=' in detector: {}", line))
+        ParseError::new(format!("Expected '=' in detector: {}", line), span)
     })?;
     
     let name = rest[..eq_pos].trim().to_string();
@@ -243,7 +330,7 @@ fn parse_detector(line: &str) -> Result<DetectorDecl, ParseError> {
         // Parse: position(name)
         let start = rest.find('(').unwrap();
         let end = rest.find(')').ok_or_else(|| {
-            ParseError::Message(format!("Expected ')' in position detector: {}", line))
+            ParseError::new(format!("Expected ')' in position detector: {}", line), span)
         })?;
         let particle_name = rest[start + 1..end].trim().to_string();
         DetectorKind::Position(particle_name)
@@ -251,25 +338,25 @@ fn parse_detector(line: &str) -> Result<DetectorDecl, ParseError> {
         // Parse: distance(a, b)
         let start = rest.find('(').unwrap();
         let end = rest.find(')').ok_or_else(|| {
-            ParseError::Message(format!("Expected ')' in distance detector: {}", line))
+            ParseError::new(format!("Expected ')' in distance detector: {}", line), span)
         })?;
         let args_str = &rest[start + 1..end];
         let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
         if args.len() != 2 {
-            return Err(ParseError::Message(format!(
-                "Expected two particle names in distance detector: {}",
-                line
-            )));
+            return Err(ParseError::new(
+                format!("Expected two particle names in distance detector: {}", line),
+                span,
+            ));
         }
         DetectorKind::Distance {
             a: args[0].to_string(),
             b: args[1].to_string(),
         }
     } else {
-        return Err(ParseError::Message(format!(
-            "Unknown detector type: {}",
-            rest
-        )));
+        return Err(ParseError::new(
+            format!("Unknown detector type: {}", rest),
+            span,
+        ));
     };
     
     Ok(DetectorDecl { name, kind })
@@ -280,9 +367,16 @@ fn parse_detector(line: &str) -> Result<DetectorDecl, ParseError> {
 // ============================================================================
 
 /// Parse a loop declaration (handles multi-line bodies)
-fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), ParseError> {
+fn parse_loop(
+    lines: &[&str],
+    start_idx: usize,
+    ctx: &ParseContext,
+) -> Result<(LoopDecl, usize), ParseError> {
     let line = lines[start_idx].trim();
-    let rest = line.strip_prefix("loop ").unwrap();
+    let line_span = ctx.full_line_span(start_idx);
+    let rest = line.strip_prefix("loop ").ok_or_else(|| {
+        ParseError::new("Expected 'loop' keyword", Some(line_span))
+    })?;
 
     let (kind, body_start) = if rest.starts_with("for ") {
         // `loop for <integer> cycles with frequency <float> damping <float> on <ident> {`
@@ -290,36 +384,36 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
         
         // Find " cycles"
         let cycles_end = after_for.find(" cycles").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'cycles' in for loop: {}", line))
+            ParseError::new(format!("Expected 'cycles' in for loop: {}", line), Some(line_span))
         })?;
         let cycles: u32 = after_for[..cycles_end].trim().parse().map_err(|_| {
-            ParseError::Message(format!("Invalid cycle count: {}", &after_for[..cycles_end]))
+            ParseError::new(format!("Invalid cycle count: {}", &after_for[..cycles_end]), Some(line_span))
         })?;
         
         let after_cycles = &after_for[cycles_end + 7..];
         
         // Find "with frequency"
         let freq_start = after_cycles.find("with frequency ").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'with frequency' in for loop: {}", line))
+            ParseError::new(format!("Expected 'with frequency' in for loop: {}", line), Some(line_span))
         })?;
         let after_freq = &after_cycles[freq_start + 15..];
         
         // Find frequency value
         let freq_end = after_freq.find(" damping ").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'damping' after frequency: {}", line))
+            ParseError::new(format!("Expected 'damping' after frequency: {}", line), Some(line_span))
         })?;
         let frequency: f32 = after_freq[..freq_end].trim().parse().map_err(|_| {
-            ParseError::Message(format!("Invalid frequency: {}", &after_freq[..freq_end]))
+            ParseError::new(format!("Invalid frequency: {}", &after_freq[..freq_end]), Some(line_span))
         })?;
         
         let after_damp = &after_freq[freq_end + 9..];
         
         // Find damping value
         let damp_end = after_damp.find(" on ").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'on' after damping: {}", line))
+            ParseError::new(format!("Expected 'on' after damping: {}", line), Some(line_span))
         })?;
         let damping: f32 = after_damp[..damp_end].trim().parse().map_err(|_| {
-            ParseError::Message(format!("Invalid damping: {}", &after_damp[..damp_end]))
+            ParseError::new(format!("Invalid damping: {}", &after_damp[..damp_end]), Some(line_span))
         })?;
         
         // Find particle name
@@ -329,10 +423,10 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
         } else if after_on.ends_with('{') {
             after_on[..after_on.len() - 1].trim().to_string()
         } else {
-            return Err(ParseError::Message(format!(
-                "Expected '{{' after particle name: {}",
-                line
-            )));
+            return Err(ParseError::new(
+                format!("Expected '{{' after particle name: {}", line),
+                Some(line_span),
+            ));
         };
         
         (LoopKind::ForCycles {
@@ -347,30 +441,30 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
         
         // Find " with frequency"
         let with_pos = after_while.find(" with frequency ").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'with frequency' in while loop: {}", line))
+            ParseError::new(format!("Expected 'with frequency' in while loop: {}", line), Some(line_span))
         })?;
         
         let condition_str = &after_while[..with_pos];
-        let condition = parse_condition(condition_str.trim())?;
+        let condition = parse_condition(condition_str.trim(), Some(line_span))?;
         
         let after_with = &after_while[with_pos + 16..];
         
         // Parse frequency
         let freq_end = after_with.find(" damping ").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'damping' after frequency: {}", line))
+            ParseError::new(format!("Expected 'damping' after frequency: {}", line), Some(line_span))
         })?;
         let frequency: f32 = after_with[..freq_end].trim().parse().map_err(|_| {
-            ParseError::Message(format!("Invalid frequency: {}", &after_with[..freq_end]))
+            ParseError::new(format!("Invalid frequency: {}", &after_with[..freq_end]), Some(line_span))
         })?;
         
         let after_damp = &after_with[freq_end + 9..];
         
         // Parse damping
         let damp_end = after_damp.find(" on ").ok_or_else(|| {
-            ParseError::Message(format!("Expected 'on' after damping: {}", line))
+            ParseError::new(format!("Expected 'on' after damping: {}", line), Some(line_span))
         })?;
         let damping: f32 = after_damp[..damp_end].trim().parse().map_err(|_| {
-            ParseError::Message(format!("Invalid damping: {}", &after_damp[..damp_end]))
+            ParseError::new(format!("Invalid damping: {}", &after_damp[..damp_end]), Some(line_span))
         })?;
         
         // Parse target particle
@@ -380,10 +474,10 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
         } else if after_on.ends_with('{') {
             after_on[..after_on.len() - 1].trim().to_string()
         } else {
-            return Err(ParseError::Message(format!(
-                "Expected '{{' after particle name: {}",
-                line
-            )));
+            return Err(ParseError::new(
+                format!("Expected '{{' after particle name: {}", line),
+                Some(line_span),
+            ));
         };
         
         (LoopKind::WhileCondition {
@@ -393,7 +487,7 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
             target,
         }, start_idx + 1)
     } else {
-        return Err(ParseError::Message(format!("Unknown loop type: {}", line)));
+        return Err(ParseError::new(format!("Unknown loop type: {}", line), Some(line_span)));
     };
 
     // Parse loop body (lines until closing brace)
@@ -403,6 +497,7 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
     
     while i < lines.len() && brace_count > 0 {
         let body_line = lines[i].trim();
+        let body_span = ctx.full_line_span(i);
         
         if body_line == "}" {
             brace_count -= 1;
@@ -416,7 +511,7 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
         
         if brace_count > 0 && !body_line.is_empty() && !body_line.starts_with('#') {
             if body_line.starts_with("force push(") {
-                body.push(parse_loop_body_stmt(body_line)?);
+                body.push(parse_loop_body_stmt(body_line, Some(body_span))?);
             }
         }
         
@@ -424,7 +519,7 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
     }
     
     if brace_count > 0 {
-        return Err(ParseError::Message("Unclosed loop body".to_string()));
+        return Err(ParseError::new("Unclosed loop body".to_string(), Some(line_span)));
     }
     
     Ok((LoopDecl {
@@ -435,19 +530,19 @@ fn parse_loop(lines: &[&str], start_idx: usize) -> Result<(LoopDecl, usize), Par
 }
 
 /// Parse a condition expression
-fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
+fn parse_condition(cond_str: &str, span: Option<Span>) -> Result<ConditionExpr, ParseError> {
     // Try position(<ident>).x < float or position(<ident>).x > float
     if cond_str.contains("position(") {
         let pos_start = cond_str.find("position(").unwrap();
         let pos_end = cond_str.find(')').ok_or_else(|| {
-            ParseError::Message(format!("Expected ')' in position condition: {}", cond_str))
+            ParseError::new(format!("Expected ')' in position condition: {}", cond_str), span)
         })?;
         let particle_name = cond_str[pos_start + 9..pos_end].trim().to_string();
         
         let after_paren = &cond_str[pos_end + 1..];
         if after_paren.starts_with(".x < ") {
             let threshold: f32 = after_paren[5..].trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid threshold: {}", &after_paren[5..]))
+                ParseError::new(format!("Invalid threshold: {}", &after_paren[5..]), span)
             })?;
             return Ok(ConditionExpr::LessThan(
                 ObservableExpr::PositionX(particle_name),
@@ -455,7 +550,7 @@ fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
             ));
         } else if after_paren.starts_with(".x > ") {
             let threshold: f32 = after_paren[5..].trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid threshold: {}", &after_paren[5..]))
+                ParseError::new(format!("Invalid threshold: {}", &after_paren[5..]), span)
             })?;
             return Ok(ConditionExpr::GreaterThan(
                 ObservableExpr::PositionX(particle_name),
@@ -463,7 +558,7 @@ fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
             ));
         } else if after_paren.starts_with(".y < ") {
             let threshold: f32 = after_paren[5..].trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid threshold: {}", &after_paren[5..]))
+                ParseError::new(format!("Invalid threshold: {}", &after_paren[5..]), span)
             })?;
             return Ok(ConditionExpr::LessThan(
                 ObservableExpr::PositionY(particle_name),
@@ -471,7 +566,7 @@ fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
             ));
         } else if after_paren.starts_with(".y > ") {
             let threshold: f32 = after_paren[5..].trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid threshold: {}", &after_paren[5..]))
+                ParseError::new(format!("Invalid threshold: {}", &after_paren[5..]), span)
             })?;
             return Ok(ConditionExpr::GreaterThan(
                 ObservableExpr::PositionY(particle_name),
@@ -484,21 +579,21 @@ fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
     if cond_str.starts_with("distance(") {
         let after_dist = cond_str.strip_prefix("distance(").unwrap();
         let paren_end = after_dist.find(')').ok_or_else(|| {
-            ParseError::Message(format!("Expected ')' in distance condition: {}", cond_str))
+            ParseError::new(format!("Expected ')' in distance condition: {}", cond_str), span)
         })?;
         let args_str = &after_dist[..paren_end];
         let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
         if args.len() != 2 {
-            return Err(ParseError::Message(format!(
-                "Expected two particle names in distance condition: {}",
-                cond_str
-            )));
+            return Err(ParseError::new(
+                format!("Expected two particle names in distance condition: {}", cond_str),
+                span,
+            ));
         }
         
         let rest = &after_dist[paren_end + 1..].trim();
         if rest.starts_with("< ") {
             let threshold: f32 = rest[2..].trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid threshold: {}", &rest[2..]))
+                ParseError::new(format!("Invalid threshold: {}", &rest[2..]), span)
             })?;
             return Ok(ConditionExpr::LessThan(
                 ObservableExpr::Distance(args[0].to_string(), args[1].to_string()),
@@ -506,7 +601,7 @@ fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
             ));
         } else if rest.starts_with("> ") {
             let threshold: f32 = rest[2..].trim().parse().map_err(|_| {
-                ParseError::Message(format!("Invalid threshold: {}", &rest[2..]))
+                ParseError::new(format!("Invalid threshold: {}", &rest[2..]), span)
             })?;
             return Ok(ConditionExpr::GreaterThan(
                 ObservableExpr::Distance(args[0].to_string(), args[1].to_string()),
@@ -515,16 +610,18 @@ fn parse_condition(cond_str: &str) -> Result<ConditionExpr, ParseError> {
         }
     }
     
-    Err(ParseError::Message(format!("Unknown condition format: {}", cond_str)))
+    Err(ParseError::new(format!("Unknown condition format: {}", cond_str), span))
 }
 
 /// Parse a loop body statement
-fn parse_loop_body_stmt(line: &str) -> Result<LoopBodyStmt, ParseError> {
+fn parse_loop_body_stmt(line: &str, span: Option<Span>) -> Result<LoopBodyStmt, ParseError> {
     // `force push(<ident>) magnitude <float> direction (<float>, <float>)`
-    let rest = line.strip_prefix("force push(").unwrap();
+    let rest = line.strip_prefix("force push(").ok_or_else(|| {
+        ParseError::new("Expected 'force push('", span)
+    })?;
     
     let paren_end = rest.find(')').ok_or_else(|| {
-        ParseError::Message(format!("Expected ')' in push force: {}", line))
+        ParseError::new(format!("Expected ')' in push force: {}", line), span)
     })?;
     let particle = rest[..paren_end].trim().to_string();
     
@@ -532,37 +629,37 @@ fn parse_loop_body_stmt(line: &str) -> Result<LoopBodyStmt, ParseError> {
     
     // Parse magnitude
     let mag_start = rest.find("magnitude ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'magnitude' in push force: {}", line))
+        ParseError::new(format!("Expected 'magnitude' in push force: {}", line), span)
     })?;
     let after_mag = &rest[mag_start + 10..];
     let mag_end = after_mag.find(" direction ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'direction' in push force: {}", line))
+        ParseError::new(format!("Expected 'direction' in push force: {}", line), span)
     })?;
     let magnitude: f32 = after_mag[..mag_end].trim().parse().map_err(|_| {
-        ParseError::Message(format!("Invalid magnitude: {}", &after_mag[..mag_end]))
+        ParseError::new(format!("Invalid magnitude: {}", &after_mag[..mag_end]), span)
     })?;
     
     // Parse direction
     let after_dir = &after_mag[mag_end + 11..];
     let dir_start = after_dir.find('(').ok_or_else(|| {
-        ParseError::Message(format!("Expected '(' in direction: {}", line))
+        ParseError::new(format!("Expected '(' in direction: {}", line), span)
     })?;
     let dir_end = after_dir.find(')').ok_or_else(|| {
-        ParseError::Message(format!("Expected ')' in direction: {}", line))
+        ParseError::new(format!("Expected ')' in direction: {}", line), span)
     })?;
     let dir_str = &after_dir[dir_start + 1..dir_end];
     let coords: Vec<&str> = dir_str.split(',').map(|s| s.trim()).collect();
     if coords.len() != 2 {
-        return Err(ParseError::Message(format!(
-            "Expected two coordinates in direction: {}",
-            line
-        )));
+        return Err(ParseError::new(
+            format!("Expected two coordinates in direction: {}", line),
+            span,
+        ));
     }
     let x: f32 = coords[0].parse().map_err(|_| {
-        ParseError::Message(format!("Invalid x coordinate: {}", coords[0]))
+        ParseError::new(format!("Invalid x coordinate: {}", coords[0]), span)
     })?;
     let y: f32 = coords[1].parse().map_err(|_| {
-        ParseError::Message(format!("Invalid y coordinate: {}", coords[1]))
+        ParseError::new(format!("Invalid y coordinate: {}", coords[1]), span)
     })?;
     
     Ok(LoopBodyStmt::ForcePush {
@@ -573,13 +670,15 @@ fn parse_loop_body_stmt(line: &str) -> Result<LoopBodyStmt, ParseError> {
 }
 
 /// Parse a well declaration: `well <name> on <ident> if position(<ident>).x >= <float> depth <float>`
-fn parse_well(line: &str) -> Result<WellDecl, ParseError> {
+fn parse_well(line: &str, span: Option<Span>) -> Result<WellDecl, ParseError> {
     // Remove "well " prefix
-    let rest = line.strip_prefix("well ").unwrap();
+    let rest = line.strip_prefix("well ").ok_or_else(|| {
+        ParseError::new("Expected 'well' keyword", span)
+    })?;
     
     // Find " on "
     let on_pos = rest.find(" on ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'on' in well declaration: {}", line))
+        ParseError::new(format!("Expected 'on' in well declaration: {}", line), span)
     })?;
     let name = rest[..on_pos].trim().to_string();
     
@@ -587,7 +686,7 @@ fn parse_well(line: &str) -> Result<WellDecl, ParseError> {
     
     // Find " if position("
     let if_pos = after_on.find(" if position(").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'if position(' in well: {}", line))
+        ParseError::new(format!("Expected 'if position(' in well: {}", line), span)
     })?;
     let particle = after_on[..if_pos].trim().to_string();
     
@@ -595,31 +694,31 @@ fn parse_well(line: &str) -> Result<WellDecl, ParseError> {
     
     // Find closing paren for position
     let pos_end = after_if.find(')').ok_or_else(|| {
-        ParseError::Message(format!("Expected ')' in position: {}", line))
+        ParseError::new(format!("Expected ')' in position: {}", line), span)
     })?;
     let pos_particle = after_if[..pos_end].trim().to_string();
     
     // Check for ".x >= "
     let after_paren = &after_if[pos_end + 1..];
     if !after_paren.starts_with(".x >= ") {
-        return Err(ParseError::Message(format!(
-            "Expected '.x >= ' after position: {}",
-            line
-        )));
+        return Err(ParseError::new(
+            format!("Expected '.x >= ' after position: {}", line),
+            span,
+        ));
     }
     
     let after_x = &after_paren[6..];
     
     // Find " depth "
     let depth_pos = after_x.find(" depth ").ok_or_else(|| {
-        ParseError::Message(format!("Expected 'depth' in well: {}", line))
+        ParseError::new(format!("Expected 'depth' in well: {}", line), span)
     })?;
     let threshold: f32 = after_x[..depth_pos].trim().parse().map_err(|_| {
-        ParseError::Message(format!("Invalid threshold: {}", &after_x[..depth_pos]))
+        ParseError::new(format!("Invalid threshold: {}", &after_x[..depth_pos]), span)
     })?;
     
     let depth: f32 = after_x[depth_pos + 7..].trim().parse().map_err(|_| {
-        ParseError::Message(format!("Invalid depth: {}", &after_x[depth_pos + 7..]))
+        ParseError::new(format!("Invalid depth: {}", &after_x[depth_pos + 7..]), span)
     })?;
     
     Ok(WellDecl {

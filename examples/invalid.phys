@@ -1,0 +1,11 @@
+# This file has intentional errors for testing the checker
+
+particle a at (0.0, 0.0) mass 1.0
+particle a at (1.0, 0.0) mass 1.0  # Duplicate name
+
+force gravity(a, nonexistent) G = 1.0  # Unknown particle
+
+simulate dt = 0.01 steps = 1000
+
+detect pos = position(unknown)  # Unknown particle
+

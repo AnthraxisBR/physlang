@@ -1,3 +1,4 @@
+use crate::analyzer::analyze_program;
 use crate::ast::{
     ConditionExpr, DetectorKind, ForceKind, LoopKind, ObservableExpr, Program,
 };
@@ -34,6 +35,17 @@ pub struct SimulationContext {
 /// Main entry point: parse and run a PhysLang program
 pub fn run_program(source: &str) -> Result<SimulationResult, Box<dyn std::error::Error>> {
     let program = parse_program(source)?;
+    
+    // Perform static analysis
+    let diagnostics = analyze_program(&program);
+    if diagnostics.has_errors() {
+        let error_messages: Vec<String> = diagnostics
+            .errors()
+            .map(|d| d.message.clone())
+            .collect();
+        return Err(format!("Static analysis errors:\n{}", error_messages.join("\n")).into());
+    }
+    
     let mut ctx = build_simulation_context(&program)?;
 
     // Run the simulation
