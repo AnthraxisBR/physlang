@@ -64,7 +64,13 @@ fn main() {
         }
         Command::Visual { file } => {
             // Check for display before attempting to launch GUI
-            let has_display = std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok();
+            // On Windows, native GUI is available, so skip the check
+            // On Unix-like systems, check for X11/Wayland display
+            let has_display = if cfg!(target_os = "windows") {
+                true // Windows has native GUI support
+            } else {
+                std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
+            };
             
             if !has_display {
                 eprintln!("Error: No display server found.");

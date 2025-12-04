@@ -1,0 +1,126 @@
+# ============================================================================
+# Market Stress Propagation Model
+# ============================================================================
+#
+# This PhysLang program models how financial stress propagates through a
+# network of interconnected companies. It visualizes the cascading effects
+# of market shocks in a physics-based simulation.
+#
+# MODEL COMPONENTS:
+# -----------------
+#
+# 1. PARTICLES (Companies):
+#    - A, B, C, D, E, F represent 6 companies in a financial network
+#    - Each company has position (x, y) and mass (representing size/stability)
+#    - Companies are initially arranged in a rough circle for visual clarity
+#
+# 2. SPRINGS (Financial Exposure):
+#    - Spring forces between companies represent financial interdependencies
+#    - Spring stiffness (k) = intensity of exposure/risk sharing
+#    - Rest length = "healthy" distance between companies
+#    - When one company is stressed (moved), springs transmit forces to neighbors
+#
+# 3. GRAVITY (Market Stability):
+#    - Gravity toward center keeps the network stable and prevents drift
+#    - Represents overall market forces that maintain equilibrium
+#
+# 4. SHOCK ORIGIN (Company A):
+#    - Company A is periodically subjected to external shocks
+#    - Loop-for applies push forces at regular intervals
+#    - Push directions vary to simulate different types of market events
+#    - These shocks propagate through the spring network to other companies
+#
+# 5. DEFAULT WELL (Risk Threshold):
+#    - A potential well represents a "default boundary"
+#    - If Company B's x-position exceeds 4.0, it enters the default zone
+#    - The well applies a strong restoring force, pulling it toward the threshold
+#    - This visually demonstrates a company approaching financial distress
+#
+# WHAT TO OBSERVE IN VEL:
+# -----------------------
+#
+# - Initial State: Companies form a stable circular network
+# - Shock Events: Watch Company A get pushed periodically (every few seconds)
+# - Stress Propagation: See how forces ripple through the spring network
+#   - Companies wobble and oscillate as shocks travel through connections
+#   - The network responds dynamically to each shock
+# - Default Zone: If Company B drifts too far right (x >= 4.0), watch it get
+#   pulled strongly by the default well - a dramatic visual event
+# - Network Dynamics: The entire system oscillates and settles, showing how
+#   interconnected companies respond to market stress
+#
+# The simulation creates a mesmerizing animation of financial contagion,
+# where local shocks create global network effects through physical forces.
+#
+# ============================================================================
+
+# Center anchor for gravity (invisible heavy particle)
+particle center at (0.0, 0.0) mass 50.0
+
+# Companies arranged in a rough circle
+# Company A is the shock origin (most exposed to external events)
+particle A at (6.0, 0.0) mass 1.0
+particle B at (3.0, 5.2) mass 1.0
+particle C at (-3.0, 5.2) mass 1.0
+particle D at (-6.0, 0.0) mass 1.0
+particle E at (-3.0, -5.2) mass 1.0
+particle F at (3.0, -5.2) mass 1.0
+
+# Financial exposure network: springs connect companies
+# Higher k = stronger financial ties (more risk transmission)
+# Rest length = optimal "healthy" distance
+force spring(A, B) k = 1.5 rest = 4.0
+force spring(A, F) k = 1.5 rest = 4.0
+force spring(B, C) k = 1.8 rest = 3.5
+force spring(C, D) k = 1.8 rest = 3.5
+force spring(D, E) k = 1.8 rest = 3.5
+force spring(E, F) k = 1.8 rest = 3.5
+force spring(B, F) k = 1.2 rest = 5.0
+force spring(C, E) k = 1.2 rest = 5.0
+force spring(A, D) k = 1.0 rest = 6.0
+
+# Market stability: gravity toward center prevents network drift
+# Moderate G values keep system stable but allow dynamic response
+force gravity(A, center) G = 0.15
+force gravity(B, center) G = 0.15
+force gravity(C, center) G = 0.15
+force gravity(D, center) G = 0.15
+force gravity(E, center) G = 0.15
+force gravity(F, center) G = 0.15
+
+# Default threshold well: Company B enters default zone if x >= 4.0
+# Depth controls how strongly it's pulled back (higher = stronger pull)
+well default_zone on B if position(B).x >= 4.0 depth 8.0
+
+# Simulation parameters: balanced for visual appeal and stability
+# dt = 0.02 provides smooth animation without excessive computation
+# steps = 8000 gives ~160 time units of simulation (good for observing cycles)
+simulate dt = 0.02 steps = 8000
+
+# Shock events: periodic pushes to Company A (the shock origin)
+# Multiple loops create varied shock patterns for visual interest
+# Loop 1: Rightward shocks (positive market events or negative for others)
+loop for 8 cycles with frequency 0.4 damping 0.02 on A {
+    force push(A) magnitude 0.8 direction (1.0, 0.2)
+}
+
+# Loop 2: Leftward shocks (different type of market event)
+loop for 6 cycles with frequency 0.35 damping 0.02 on A {
+    force push(A) magnitude 0.6 direction (-0.8, 0.3)
+}
+
+# Loop 3: Upward shocks (creating vertical stress)
+loop for 5 cycles with frequency 0.3 damping 0.02 on A {
+    force push(A) magnitude 0.7 direction (0.2, 1.0)
+}
+
+# Detectors: measure final state and key relationships
+# Note: position() returns x-coordinate only in v0.2
+detect shock_origin_x = position(A)
+detect risk_company_x = position(B)
+detect network_span_AB = distance(A, B)
+detect network_span_AC = distance(A, C)
+detect network_span_BD = distance(B, D)
+detect network_span_CE = distance(C, E)
+detect network_span_DF = distance(D, F)
+
