@@ -39,7 +39,7 @@ impl VelApp {
 
         // Start watching the file
         if let Some(ref mut w) = watcher {
-            if let Err(e) = w.watch(&source_path, notify::RecursiveMode::NonRecursive) {
+            if let Err(_e) = w.watch(&source_path, notify::RecursiveMode::NonRecursive) {
                 // Don't print to stderr here to avoid broken pipe issues
                 // File watching is optional for VEL functionality
             }

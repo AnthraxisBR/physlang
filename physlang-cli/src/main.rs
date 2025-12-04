@@ -63,11 +63,27 @@ fn main() {
             }
         }
         Command::Visual { file } => {
-            match main_visual(file) {
-                Ok(()) => 0,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    1
+            // Check for display before attempting to launch GUI
+            let has_display = std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok();
+            
+            if !has_display {
+                eprintln!("Error: No display server found.");
+                eprintln!();
+                eprintln!("The Visual Evaluation Loop requires a display server to run.");
+                eprintln!("On WSL2, you can:");
+                eprintln!("  1. Install an X server (like VcXsrv or X410) on Windows");
+                eprintln!("  2. Set DISPLAY environment variable: export DISPLAY=:0");
+                eprintln!("  3. Or use WSLg if available (Windows 11 with WSL2)");
+                eprintln!();
+                eprintln!("Alternatively, use 'physlang run' to execute programs without visualization.");
+                1
+            } else {
+                match main_visual(file) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        1
+                    }
                 }
             }
         }
@@ -155,21 +171,6 @@ fn print_diagnostics(source: &str, diagnostics: &[Diagnostic]) {
 
 /// Launch the Visual Evaluation Loop (VEL) window
 fn main_visual(file: PathBuf) -> eframe::Result<()> {
-    // Check if DISPLAY is set (for X11) or WAYLAND_DISPLAY (for Wayland)
-    let has_display = std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok();
-    
-    if !has_display {
-        eprintln!("Error: No display server found.");
-        eprintln!();
-        eprintln!("The Visual Evaluation Loop requires a display server to run.");
-        eprintln!("On WSL2, you can:");
-        eprintln!("  1. Install an X server (like VcXsrv or X410) on Windows");
-        eprintln!("  2. Set DISPLAY environment variable: export DISPLAY=:0");
-        eprintln!("  3. Or use WSLg if available (Windows 11 with WSL2)");
-        eprintln!();
-        eprintln!("Alternatively, use 'physlang run' to execute programs without visualization.");
-        return Err(eframe::Error::Other("No display server available".into()));
-    }
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
