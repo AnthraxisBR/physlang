@@ -1,0 +1,10 @@
+particle a at (0.0, 0.0) mass 1.0
+
+loop for 10 cycles with frequency 2.0 damping 0.05 on a {
+    force push(a) magnitude 0.5 direction (1.0, 0.0)
+}
+
+simulate dt = 0.01 steps = 10000
+
+detect a_pos = position(a)
+
