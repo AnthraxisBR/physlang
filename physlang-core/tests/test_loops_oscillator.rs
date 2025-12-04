@@ -1,7 +1,6 @@
 //! Unit tests for oscillator logic (phase accumulation, wrapping)
 
 use physlang_core::loops::{LoopInstance, LoopKindRuntime};
-use physlang_core::engine::Particle;
 use physlang_core::tests::test_helpers::approx_eq_f32;
 use std::f32::consts::PI;
 
@@ -18,13 +17,6 @@ fn test_phase_accumulation() {
         body: vec![],
         active: true,
     };
-    
-    let mut particles = vec![Particle {
-        name: "a".to_string(),
-        pos: glam::Vec2::ZERO,
-        vel: glam::Vec2::ZERO,
-        mass: 1.0,
-    }];
     
     let dt = 0.1;
     
@@ -58,13 +50,6 @@ fn test_phase_wrap() {
         body: vec![],
         active: true,
     };
-    
-    let mut particles = vec![Particle {
-        name: "a".to_string(),
-        pos: glam::Vec2::ZERO,
-        vel: glam::Vec2::ZERO,
-        mass: 1.0,
-    }];
     
     let dt = 0.2;
     

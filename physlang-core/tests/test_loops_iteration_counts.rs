@@ -39,7 +39,9 @@ fn test_for_loop_iteration_count() {
             _ => panic!("Expected ForCycles"),
         };
         
-        update_and_apply_loops(&mut [&mut loop_inst], &mut particles, dt);
+        let mut loops_vec = vec![loop_inst];
+        update_and_apply_loops(&mut loops_vec, &mut particles, dt);
+        loop_inst = loops_vec.into_iter().next().unwrap();
         
         let new_cycles = match &loop_inst.kind {
             LoopKindRuntime::ForCycles { cycles_remaining, .. } => *cycles_remaining,
@@ -92,7 +94,9 @@ fn test_for_loop_body_triggers_once_per_cycle() {
     // Run one complete cycle
     let mut steps = 0;
     while loop_inst.active && steps < 1000 {
-        update_and_apply_loops(&mut [&mut loop_inst], &mut particles, dt);
+        let mut loops_vec = vec![loop_inst];
+        update_and_apply_loops(&mut loops_vec, &mut particles, dt);
+        loop_inst = loops_vec.into_iter().next().unwrap();
         steps += 1;
     }
     
@@ -140,14 +144,21 @@ fn test_while_loop_stops_when_condition_false() {
         if !loop_inst.active {
             break;
         }
-        update_and_apply_loops(&mut [&mut loop_inst], &mut particles, dt);
+        {
+            let mut loops_vec = vec![loop_inst];
+            update_and_apply_loops(&mut loops_vec, &mut particles, dt);
+            loop_inst = loops_vec.into_iter().next().unwrap();
+        }
         
-        // Also update position (simplified)
-        particles[0].pos += particles[0].vel * dt;
+        // Also update position (simplified) - do this after mutable borrow is released
+        let vel = particles[0].vel;
+        particles[0].pos += vel * dt;
         
-        // Check condition manually
+        // Check condition manually (after mutable borrow is released)
         use physlang_core::loops::evaluate_loop_conditions;
-        evaluate_loop_conditions(&mut [&mut loop_inst], &particles);
+        let mut loops_vec = vec![loop_inst];
+        evaluate_loop_conditions(&mut loops_vec, &particles);
+        loop_inst = loops_vec.into_iter().next().unwrap();
     }
     
     // Loop should eventually deactivate when position.x >= 5.0
@@ -156,7 +167,7 @@ fn test_while_loop_stops_when_condition_false() {
 
 #[test]
 fn test_inactive_loop_does_not_iterate() {
-    let mut loop_inst = LoopInstance {
+    let loop_inst = LoopInstance {
         kind: LoopKindRuntime::ForCycles {
             target_index: 0,
             cycles_remaining: 5,
@@ -182,7 +193,8 @@ fn test_inactive_loop_does_not_iterate() {
     let initial_vel = particles[0].vel;
     
     // Update loop (should do nothing)
-    update_and_apply_loops(&mut [&mut loop_inst], &mut particles, 0.1);
+    let mut loops_vec = vec![loop_inst];
+    update_and_apply_loops(&mut loops_vec, &mut particles, 0.1);
     
     // Velocity should be unchanged
     assert_eq!(particles[0].vel, initial_vel);

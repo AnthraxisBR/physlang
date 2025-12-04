@@ -1,7 +1,7 @@
 //! Unit tests for push force (via loop body)
 
 use physlang_core::engine::Particle;
-use physlang_core::loops::{LoopBodyRuntime, LoopInstance, LoopKindRuntime};
+use physlang_core::loops::LoopBodyRuntime;
 use physlang_core::tests::test_helpers::approx_eq_f32;
 use glam::Vec2;
 

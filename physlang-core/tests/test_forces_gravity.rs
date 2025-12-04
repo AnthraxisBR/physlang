@@ -70,7 +70,7 @@ fn test_gravity_force_symmetric() {
         g: 1.0,
     });
     
-    let accel_a = world.compute_acceleration(0);
+    let _accel_a = world.compute_acceleration(0);
     let accel_b = world.compute_acceleration(1);
     
     // Acceleration on b should point from b to a (toward a)

@@ -135,7 +135,7 @@ fn test_well_different_depth() {
         pos: Vec2::new(7.0, 0.0), // Above threshold of 5.0
         vel: Vec2::ZERO,
         mass: 1.0,
-    };
+    }];
     
     let wells = vec![WellInstance {
         particle_index: 0,
