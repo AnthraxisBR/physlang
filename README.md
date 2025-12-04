@@ -122,8 +122,25 @@ The Visual Evaluation Loop (VEL) provides:
 - **Interactive controls**: Play/Pause, Reset, Step, and speed adjustment
 - **File watching**: Edit and save your `.phys` file to automatically reload the simulation
 - **Real-time feedback**: See your program execute step-by-step with visual representation
+- **Auto-scaling viewport**: Automatically adjusts to keep all particles visible
 
 When you edit and save the source file, VEL will automatically re-parse, re-analyze, and restart the simulation with your updated code. This creates a REPL-like development experience for PhysLang programs.
+
+#### VEL Examples
+
+Try these interactive visualizations:
+
+**Market Stress Demo**:
+```bash
+cargo run --bin physlang -- visual examples/vel/market_stress_demo.phys
+```
+Demonstrates how financial stress propagates through a network of companies.
+
+**Systemic Risk Visualizer**:
+```bash
+cargo run --bin physlang -- visual examples/vel/systemic_risk_visualizer/systemic_risk.phys
+```
+A comprehensive simulation of systemic risk in an interconnected banking network. See [Examples Documentation](docs/examples.md) for details.
 
 ## Project Structure
 

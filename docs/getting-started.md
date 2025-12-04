@@ -188,6 +188,55 @@ loop while position(a).x < 5.0 with frequency 1.0 damping 0.0 on a {
 detect a_x = position(a)
 ```
 
+## Visual Evaluation Loop (VEL)
+
+PhysLang includes an interactive visualizer called VEL (Visual Evaluation Loop) that lets you watch your simulations in real-time.
+
+### Running VEL
+
+To visualize a program:
+
+```bash
+cargo run --bin physlang -- visual examples/graph_layout.phys
+```
+
+VEL provides:
+- **Live 2D visualization** of particles and forces
+- **Interactive controls**: Play, Pause, Reset, Step, Speed adjustment
+- **Auto-scaling viewport**: Automatically keeps all particles visible
+- **File watching**: Edit and save your `.phys` file to auto-reload
+
+### VEL Examples
+
+Try these interactive visualizations:
+
+**Market Stress Demo**:
+```bash
+cargo run --bin physlang -- visual examples/vel/market_stress_demo.phys
+```
+Watch how financial stress propagates through a network of companies.
+
+**Systemic Risk Visualizer**:
+```bash
+cargo run --bin physlang -- visual examples/vel/systemic_risk_visualizer/systemic_risk.phys
+```
+A comprehensive simulation of systemic risk in an interconnected banking network. See [Examples Documentation](examples.md) for detailed explanation.
+
+### VEL Controls
+
+- **▶ Play**: Start/resume simulation
+- **⏸ Pause**: Pause simulation
+- **⏮ Reset**: Restart from initial state
+- **⏭ Step**: Advance one simulation step
+- **Speed Slider**: Adjust simulation speed (0.1x to 10x)
+
+### Tips for VEL
+
+- **Edit and save**: VEL watches your file and reloads automatically
+- **Adjust speed**: Use the speed slider to slow down fast simulations
+- **Reset often**: Use Reset to restart and observe initial conditions
+- **Watch for patterns**: VEL is great for understanding system dynamics
+
 ## Next Steps
 
 1. **Try the examples**: Run programs in the `examples/` directory

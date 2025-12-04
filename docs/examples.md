@@ -140,6 +140,166 @@ cargo run --bin physlang -- run examples/loop_while_well.phys
 - `depth = 10.0`: Well strength
 - `magnitude = 0.3`: Push strength (smaller than well to allow capture)
 
+## Visual Evaluation Loop (VEL) Examples
+
+The following examples are designed specifically for interactive visualization using the Visual Evaluation Loop (VEL). They demonstrate complex, real-world scenarios with rich visual dynamics.
+
+### 5. Market Stress Propagation Demo
+
+**File**: `examples/vel/market_stress_demo.phys`
+
+**Description**: A financial market stress model that visualizes how stress propagates through a network of interconnected companies. This example demonstrates how localized shocks create cascading effects through financial exposure links.
+
+**Model Components**:
+- **6 Companies** (A-F): Represented as particles with different masses
+- **Spring Network**: Financial exposure links between companies
+- **Gravity**: Market stability forces keeping the network centered
+- **Shock Loops**: Multiple periodic stress events on Company A
+- **Default Well**: Risk threshold for Company B (x >= 4.0)
+
+**What it demonstrates**:
+- Complex multi-particle networks
+- Stress propagation through spring connections
+- Multiple simultaneous loop-based events
+- Default threshold visualization via wells
+- Real-time stress dynamics
+
+**Run in VEL**:
+```bash
+cargo run --bin physlang -- visual examples/vel/market_stress_demo.phys
+```
+
+**Expected visual behavior**:
+1. Companies start in a circular arrangement
+2. Company A receives periodic shocks from multiple loops
+3. Stress ripples through the spring network to connected companies
+4. Companies oscillate and respond dynamically
+5. Company B may drift toward default threshold (x >= 4.0)
+6. If threshold crossed, well creates dramatic pull effect
+
+**Key parameters**:
+- `dt = 0.02`: Smooth animation timestep
+- `steps = 8000`: ~160 time units of simulation
+- Spring `k = 1.0-1.8`: Exposure intensity
+- Gravity `G = 0.15`: Moderate stability
+- Well `depth = 8.0`: Default risk strength
+
+**Interpretation**:
+- Spring stiffness = financial exposure intensity
+- Particle mass = company size/stability
+- Well depth = default risk (inverse of stability)
+- Loop pushes = market stress events (liquidity withdrawal, asset markdowns)
+
+### 6. Systemic Risk Visualizer
+
+**File**: `examples/vel/systemic_risk_visualizer/systemic_risk.phys`
+
+**Description**: A comprehensive systemic risk propagation simulation modeling how financial stress spreads through an interconnected banking network. This is a production-ready example demonstrating real-world financial system dynamics.
+
+**Model Components**:
+- **7 Banks** (BANK_A through BANK_G): Financial institutions with asset-based masses
+- **9 Interbank Exposures**: Credit links represented as springs
+- **7 Default Wells**: Capital ratio boundaries for each bank
+- **Shock Loop**: Continuous stress events originating at BANK_A
+- **Systemic Gravity**: Market-wide pressure stabilizing the network
+
+**Financial Interpretation**:
+- **Particles (Banks)**: Mass = institution size (normalized from trillions)
+- **Springs (Exposures)**: Stiffness = exposure intensity (normalized from billions)
+- **Wells (Default Thresholds)**: Triggered at x >= 10.0, depth = default risk
+- **Shock Loop**: Represents liquidity withdrawal, asset markdowns, bank runs
+- **Gravity**: Systemic pressure, liquidity contraction, regulatory forces
+
+**Bank Network**:
+- BANK_A: 3.1T assets (mass 1.86) - Largest, shock origin
+- BANK_B: 2.4T assets (mass 1.44)
+- BANK_C: 1.9T assets (mass 1.14)
+- BANK_D: 1.6T assets (mass 0.96)
+- BANK_E: 1.1T assets (mass 0.66)
+- BANK_F: 0.8T assets (mass 0.48) - Vulnerable
+- BANK_G: 0.6T assets (mass 0.36) - Most vulnerable
+
+**Exposure Network**:
+- A→B: 120B exposure (k=1.2)
+- A→C: 80B exposure (k=0.8)
+- B→C: 90B exposure (k=0.9)
+- B→D: 110B exposure (k=1.1)
+- C→E: 70B exposure (k=0.7)
+- D→E: 60B exposure (k=0.6)
+- D→F: 50B exposure (k=0.5)
+- E→G: 40B exposure (k=0.4)
+- F→G: 30B exposure (k=0.3)
+
+**What it demonstrates**:
+- Real-world financial system modeling
+- Systemic risk propagation
+- Cascade effects through exposure network
+- Default risk visualization
+- Network resilience analysis
+- Quantitative risk metrics via detectors
+
+**Run in VEL**:
+```bash
+cargo run --bin physlang -- visual examples/vel/systemic_risk_visualizer/systemic_risk.phys
+```
+
+**Expected visual behavior**:
+1. **Initial State**: Banks arranged in a circle, springs connecting exposure links
+2. **Shock Events**: BANK_A jitters and moves due to periodic loop pushes (every ~5 seconds)
+3. **Stress Propagation**: Forces travel through spring network to connected banks
+   - Connected banks (B, C) respond to BANK_A's movements
+   - Network vibrates and oscillates as stress propagates
+   - Springs stretch and contract, showing exposure transmission
+4. **Default Risk**: Smaller banks (F, G) may drift toward x >= 10 threshold
+   - When threshold crossed, wells activate with strong restoring forces
+   - Visual indicator of financial distress
+5. **System Dynamics**: Overall network behavior
+   - **Stable**: Network oscillates but returns to equilibrium
+   - **Unstable**: Network destabilizes, banks drift far from center
+   - **Cascading**: Multiple banks approach default thresholds
+
+**Key parameters**:
+- `dt = 0.02`: Smooth animation timestep
+- `steps = 12000`: 240 time units of simulation
+- Spring `k = 0.3-1.2`: Exposure intensity (normalized)
+- Gravity `G = 0.08`: Gentle systemic pressure
+- Well `depth = 1.04-3.28`: Default risk (inverse of bank stability)
+- Loop: 120 cycles at frequency 0.2 Hz with damping 0.03
+
+**Detector Interpretation**:
+After simulation, detectors output risk metrics:
+
+- `core_link_stress`: Distance between BANK_A and BANK_B
+  - Large values indicate core network disruption
+  - Normal range: 3-5 units
+  
+- `secondary_stress`: Distance between BANK_D and BANK_E
+  - Measures stress in secondary network connections
+  - Large values indicate cascading effects
+  
+- `vulnerable_bank_x`: Final X-position of BANK_G
+  - Values >= 10 indicate default threshold crossed
+  - Higher values = deeper into default zone
+  
+- `energy_component_*`: Components for system energy calculation
+  - Sum externally to get total system stress
+  - Normal: ~15-25, Stressed: 25-40, Critical: >40
+
+**Use Cases**:
+- Financial system stress testing
+- Systemic risk analysis
+- Network resilience evaluation
+- Default risk assessment
+- Regulatory capital analysis
+- Educational demonstration of financial contagion
+
+**Modification Ideas**:
+- Adjust shock frequency/magnitude to test system resilience
+- Modify exposure network structure (add/remove springs)
+- Change bank sizes (masses) to model different scenarios
+- Adjust well depths to model different regulatory regimes
+- Vary gravity strength to simulate different market conditions
+
 ## Use Case Patterns
 
 ### Pattern 1: Mass-Spring Oscillator
