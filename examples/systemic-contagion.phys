@@ -1,82 +1,99 @@
 # -----------------------------------------------------------
-#  Systemic Financial Contagion Simulation
-#  Banks = particles, exposures = springs, default wells = traps
+#  Systemic Financial Contagion Model
+#  
+#  X-axis = Bank Health (right = healthy, left = distressed)
+#  Y-axis = Bank position in network (vertical arrangement)
+#  Springs = Inter-bank exposures (transmit stress horizontally)
+#  Shocks = Push banks LEFT (losing health/capital)
+#  
+#  NOTE: position() returns X coordinate only in PhysLang v0.8
 # -----------------------------------------------------------
 
-# Market cycle amplitude (compile-time configurable)
-let cycle_amp = 0.4
-let base_k = 0.6
+# Parameters
+let shock_strength = 0.5
+let exposure_k = 1.2
+let initial_health = 10.0
 
 # -----------------------------------------------------------
-# 1. Create banks
-# Mass = balance-sheet strength
+# Banks: X position = health (starts at 10 = healthy)
+# Arranged vertically, weaker banks have lower mass
 # -----------------------------------------------------------
 
-for i in 0..7 {
-    let strength = 1.0 + (i * 0.2)        # stronger banks have higher mass
-    particle Bank[i] at (i * 1.2, 0.0) 
-        mass strength
+particle bank_0 at (initial_health, 0.0) mass 0.8
+particle bank_1 at (initial_health, 3.0) mass 1.0
+particle bank_2 at (initial_health, 6.0) mass 1.2
+particle bank_3 at (initial_health, 9.0) mass 1.5
+particle bank_4 at (initial_health, 12.0) mass 2.0
+
+# -----------------------------------------------------------
+# Inter-bank exposures (springs)
+# Connect adjacent banks - when one moves left (loses health),
+# it pulls neighbors left too (contagion)
+# Rest length = 3 (vertical spacing), stiffness = contagion rate
+# -----------------------------------------------------------
+
+force spring(bank_0, bank_1) k = exposure_k rest = 3.0
+force spring(bank_1, bank_2) k = exposure_k rest = 3.0
+force spring(bank_2, bank_3) k = exposure_k rest = 3.0
+force spring(bank_3, bank_4) k = exposure_k rest = 3.0
+
+# Weaker cross-exposures (systemic links)
+let weak_k = exposure_k * 0.3
+force spring(bank_0, bank_2) k = weak_k rest = 6.0
+force spring(bank_1, bank_3) k = weak_k rest = 6.0
+force spring(bank_2, bank_4) k = weak_k rest = 6.0
+
+# -----------------------------------------------------------
+# Default wells: trap banks when health drops below 2
+# Creates "bankruptcy spiral" - once health < 2, pulled further left
+# -----------------------------------------------------------
+
+let default_line = 2.0
+well default_0 on bank_0 if position(bank_0).x >= default_line depth 5.0
+well default_1 on bank_1 if position(bank_1).x >= default_line depth 5.0
+well default_2 on bank_2 if position(bank_2).x >= default_line depth 5.0
+well default_3 on bank_3 if position(bank_3).x >= default_line depth 5.0
+well default_4 on bank_4 if position(bank_4).x >= default_line depth 5.0
+
+# -----------------------------------------------------------
+# External shocks: push banks LEFT (reducing health)
+# -----------------------------------------------------------
+
+# Primary crisis hits weakest bank (bank_0)
+loop for 50 cycles with frequency 0.2 damping 0.01 on bank_0 {
+    force push(bank_0) magnitude shock_strength direction (-1.0, 0.0)
+}
+
+# Secondary pressure on bank_1
+loop for 30 cycles with frequency 0.15 damping 0.01 on bank_1 {
+    force push(bank_1) magnitude 0.3 direction (-1.0, 0.0)
+}
+
+# Occasional market stress on bank_2
+loop for 15 cycles with frequency 0.08 damping 0.01 on bank_2 {
+    force push(bank_2) magnitude 0.2 direction (-1.0, 0.0)
 }
 
 # -----------------------------------------------------------
-# 2. Inter-bank exposures using springs
-# k = exposure intensity
-# Exposures decrease with distance in index space
+# Simulation
 # -----------------------------------------------------------
 
-for i in 0..7 {
-    for j in (i+1)..7 {
-        let exposure = base_k / (abs(i - j) as Scalar)
-        force spring(Bank[i], Bank[j]) 
-            k = exposure 
-            rest = 1.2
-    }
-}
+simulate dt = 0.01 steps = 10000
 
 # -----------------------------------------------------------
-# 3. Default Wells: banks with weak fundamentals
-# These create attractive potential traps
+# Detectors: Health = X position
+# X > 5 = healthy, X < 5 = stressed, X < 2 = defaulted
 # -----------------------------------------------------------
 
-for i in 0..7 {
-    if (i < 2) {   # weakest banks
-        well DefaultTrap[i](p = Bank[i]) 
-            center = (i * 1.2, -2.0)
-            depth = 3.0
-            radius = 1.0
-    }
-}
+detect bank_0_health = position(bank_0)
+detect bank_1_health = position(bank_1)
+detect bank_2_health = position(bank_2)
+detect bank_3_health = position(bank_3)
+detect bank_4_health = position(bank_4)
 
-# -----------------------------------------------------------
-# 4. Market Oscillation: cyclic credit tightening
-# Oscillator modulates the downward pull
-# -----------------------------------------------------------
-
-loop oscillator MarketCycle {
-    freq = 0.3
-    amp  = cycle_amp
-
-    # Apply periodic downward force
-    force gravity(y = -amp * sin(time))
-}
-
-# -----------------------------------------------------------
-# 5. Simulation parameters
-# -----------------------------------------------------------
-
-simulate dt = 0.01 steps = 20000
-
-# -----------------------------------------------------------
-# 6. Detectors (stress test metrics)
-# -----------------------------------------------------------
-
-# Total system kinetic energy (market volatility)
-detect total_kinetic = sum_energy()
-
-# Distance of each bank to the “default region”
-for i in 0..7 {
-    detect risk[i] = distance(position(Bank[i]), (i * 1.2, -2.0))
-}
-
-# Count how many banks fell into default wells (approx)
-detect defaults = count_below_y(threshold = -1.0)
+# Distance metrics (stress transmission)
+detect spread_01 = distance(bank_0, bank_1)
+detect spread_12 = distance(bank_1, bank_2)
+detect spread_23 = distance(bank_2, bank_3)
+detect spread_34 = distance(bank_3, bank_4)
+detect system_spread = distance(bank_0, bank_4)

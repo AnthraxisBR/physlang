@@ -28,6 +28,68 @@ PhysLang is a domain-specific language where program execution is a 2D physics s
 - **Effect system** (v0.9+): Functions are classified as pure or world-building
 - **Dimensional analysis** (v0.9+): Optional static checking of physical units consistency
 - **Comprehensive error model** (v0.9+): Structured diagnostics for static, validation, and runtime errors
+- **Module system** (v0.10+): First-class namespaces for organizing code into reusable units
+
+### Modules and Namespaces (v0.10+)
+
+PhysLang provides a module system for organizing larger programs and libraries. The design goals are:
+
+- **Namespaces**: Provide namespaces to avoid name collisions between libraries and user code
+- **Grouping**: Allow grouping related particles, forces, functions, and constants into reusable **modules**
+- **Imports**: Enable **imports** with optional aliases for ergonomic use
+- **Static structure**: Keep the model **static** and **deterministic**—module structure is fully known at compile time
+- **Lightweight**: Modules are **namespaces only** (no first-class runtime modules); they organize declarations without affecting simulation semantics
+
+#### Module Declarations
+
+Modules are declared with the `module` keyword:
+
+```phys
+module finance {
+    particle Bank at (0,0) mass 10.0
+    
+    fn exposure(a, b, amount) world {
+        force spring(a, b) k = amount rest = 1.0
+    }
+}
+```
+
+Modules can be nested to create hierarchical namespaces:
+
+```phys
+module finance {
+    module core {
+        let default_risk = 0.05;
+    }
+    module derivatives {
+        # ...
+    }
+}
+```
+
+#### Imports
+
+The `import` directive brings modules or symbols into scope:
+
+```phys
+import finance;                    # Import module, access as finance.Bank
+import finance as fin;             # Import with alias, access as fin.Bank
+import finance.Bank;               # Import symbol directly as Bank
+import finance.core.default_risk;  # Import nested symbol
+```
+
+#### Qualified Names
+
+Symbols from modules can be referenced using dot-notation:
+
+```phys
+import finance;
+
+particle LocalBank at (5, 0) mass 5.0
+force finance.exposure(finance.Bank, LocalBank, 2.0)
+```
+
+See [Syntax: Modules and Imports](syntax.md#modules-and-imports-v010) for complete grammar, and [Semantics: Module System](semantics.md#module-system-v010) for name resolution rules.
 
 ## Formal Definitions
 

@@ -255,7 +255,7 @@ impl eframe::App for VelApp {
                         egui::Align2::CENTER_TOP,
                         &particle.name,
                         egui::FontId::default(),
-                        egui::Color32::WHITE,
+                        egui::Color32::BLACK,
                     );
                 }
             }

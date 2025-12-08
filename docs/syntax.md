@@ -5,9 +5,21 @@ This document defines the complete syntax of PhysLang using Extended Backus-Naur
 ## Grammar
 
 ```
-Program         ::= (LetDecl | FunctionDecl | TopLevelCall)*
+Program         ::= (ImportDecl | ModuleDecl | LetDecl | FunctionDecl | TopLevelCall)*
                     (ParticleDecl | ForceDecl | WellDecl | LoopDecl | SimulateDecl | DetectorDecl)*
                     EOF ;
+
+// v0.10: Module system
+ModuleDecl      ::= "module" Ident "{" ModuleBody "}" ;
+
+ModuleBody      ::= (ImportDecl | ModuleDecl | LetDecl | FunctionDecl |
+                     ParticleDecl | ForceDecl | WellDecl | LoopDecl | DetectorDecl)* ;
+
+ImportDecl      ::= "import" ModulePath ("as" Ident)? ";" ;
+
+ModulePath      ::= Ident ("." Ident)* ;
+
+QualifiedName   ::= Ident ("." Ident)* ;
 
 LetDecl         ::= "let" Ident "=" Expr ";" ;
 
@@ -113,7 +125,7 @@ ExprUnary       ::= "-" ExprUnary
 ExprPrimary     ::= Float
                   | Integer
                   | String          // v0.8
-                  | Ident
+                  | QualifiedName   // v0.10: supports module.name references
                   | FuncCall
                   | "(" Expr ")" ;
 
@@ -121,7 +133,9 @@ String          ::= '"' [^"]* '"' ;  // v0.8: string literals for particle names
 
 FuncCall        ::= FuncName "(" ArgList? ")" ;
 
-FuncName        ::= "sin" | "cos" | "sqrt" | "clamp" ;
+FuncName        ::= BuiltinFunc | QualifiedName ;  // v0.10: user functions can be qualified
+
+BuiltinFunc     ::= "sin" | "cos" | "sqrt" | "clamp" ;
 
 Ident           ::= [A-Za-z_][A-Za-z0-9_]* ;
 
@@ -603,6 +617,7 @@ The following are reserved keywords and cannot be used as identifiers:
 - `sin`, `cos`, `sqrt`, `clamp` (v0.6+)
 - `match`, `in` (v0.8+)
 - `world` (v0.9+)
+- `module`, `import`, `as` (v0.10+)
 
 ## Error Handling
 
