@@ -604,3 +604,21 @@ The following are reserved keywords and cannot be used as identifiers:
 - `match`, `in` (v0.8+)
 - `world` (v0.9+)
 
+## Error Handling
+
+PhysLang provides comprehensive error diagnostics for syntax, type, and semantic errors. Common syntax-related errors include:
+
+- **Unexpected token**: Missing semicolons, unbalanced braces, invalid keywords
+- **Invalid number format**: Malformed float literals
+- **Unterminated string**: Missing closing quote
+- **Unknown keyword**: Misspelled reserved words
+
+For complete error documentation including:
+- Static type errors
+- Effect typing violations
+- Dimensional analysis errors
+- Validation and runtime errors
+- Diagnostic formatting
+
+See [Semantics: Error Semantics and Diagnostics](semantics.md#error-semantics-and-diagnostics).
+

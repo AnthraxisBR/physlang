@@ -27,6 +27,7 @@ PhysLang is a domain-specific language where program execution is a 2D physics s
 - **Static type checking** (v0.9+): Types (Scalar, Vec2, Bool, ParticleRef) are checked at compile time
 - **Effect system** (v0.9+): Functions are classified as pure or world-building
 - **Dimensional analysis** (v0.9+): Optional static checking of physical units consistency
+- **Comprehensive error model** (v0.9+): Structured diagnostics for static, validation, and runtime errors
 
 ## Formal Definitions
 
@@ -56,7 +57,7 @@ Where $F_k^i$ is the contribution of force $k$ to particle $i$.
 
 ### Integration Scheme
 
-PhysLang uses **semi-implicit Euler** integration with fixed time step $\Delta t$:
+PhysLang uses **semi-implicit Euler** integration (also called symplectic Euler) with fixed time step $\Delta t$:
 
 1. **Compute accelerations**:
    $$a_i(t) = \frac{1}{m_i} \sum_k F_k^i(W(t))$$
@@ -64,10 +65,12 @@ PhysLang uses **semi-implicit Euler** integration with fixed time step $\Delta t
 2. **Update velocities**:
    $$v_i(t + \Delta t) = v_i(t) + a_i(t) \cdot \Delta t$$
 
-3. **Update positions**:
+3. **Update positions** (using **new** velocity):
    $$x_i(t + \Delta t) = x_i(t) + v_i(t + \Delta t) \cdot \Delta t$$
 
-This method provides better energy conservation than explicit Euler while remaining computationally efficient.
+This method provides better energy conservation than explicit Euler while remaining computationally efficient. The key insight is that positions are updated using the newly computed velocity, making the method symplectic (phase-space volume preserving).
+
+See [Semantics: Numerical Semantics and Simulation Model](semantics.md#numerical-semantics-and-simulation-model) for complete integrator specification, stability analysis, and worked examples.
 
 ### Oscillators (Loops)
 
@@ -214,6 +217,21 @@ PhysLang execution is **deterministic** given:
 
 This ensures reproducible results, which is crucial for program correctness and debugging.
 
+**Bit-exact reproducibility**: PhysLang guarantees that the same program produces bit-identical outputs across:
+- Multiple runs on the same machine
+- Different machines with compliant implementations
+- Different operating systems
+
+This is achieved through:
+- IEEE 754 float32 arithmetic with round-to-nearest-even
+- Fixed iteration order for all operations
+- No randomness or non-deterministic parallelism
+- Fully specified edge-case behavior
+
+**Error determinism**: Error detection and reporting are also deterministic. The same source code always produces the same errors in the same order, enabling reliable testing and CI integration.
+
+See [Semantics: Determinism Guarantees](semantics.md#determinism-guarantees) for the complete specification.
+
 ## Numerical Considerations
 
 ### Time Step Selection
@@ -224,6 +242,8 @@ The time step $\Delta t$ must be small enough to maintain stability:
 - For springs: $\Delta t < \frac{2}{\sqrt{k/m}}$ for spring constant $k$ and mass $m$
 - Typical values: $\Delta t = 0.01$ to $0.001$
 
+See [Semantics: Stability Constraints](semantics.md#stability-constraints-and-recommendations) for detailed stability analysis and parameter recommendations.
+
 ### Energy Conservation
 
 Semi-implicit Euler provides better energy conservation than explicit Euler, but some energy drift is inevitable over long simulations. Damping can help stabilize systems but changes the physics.
@@ -231,6 +251,8 @@ Semi-implicit Euler provides better energy conservation than explicit Euler, but
 ### Precision Limits
 
 Floating-point arithmetic limits precision. Very small forces or positions may be lost to numerical precision. Very large values may cause overflow.
+
+**Runtime error handling**: PhysLang detects numerical failures (NaN, Infinity, overflow) during simulation and halts with detailed diagnostics. See [Semantics: Runtime Simulation Errors](semantics.md#runtime-simulation-errors) for details.
 
 ## Relation to Analog Computing
 

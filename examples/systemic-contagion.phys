@@ -1,0 +1,82 @@
+# -----------------------------------------------------------
+#  Systemic Financial Contagion Simulation
+#  Banks = particles, exposures = springs, default wells = traps
+# -----------------------------------------------------------
+
+# Market cycle amplitude (compile-time configurable)
+let cycle_amp = 0.4
+let base_k = 0.6
+
+# -----------------------------------------------------------
+# 1. Create banks
+# Mass = balance-sheet strength
+# -----------------------------------------------------------
+
+for i in 0..7 {
+    let strength = 1.0 + (i * 0.2)        # stronger banks have higher mass
+    particle Bank[i] at (i * 1.2, 0.0) 
+        mass strength
+}
+
+# -----------------------------------------------------------
+# 2. Inter-bank exposures using springs
+# k = exposure intensity
+# Exposures decrease with distance in index space
+# -----------------------------------------------------------
+
+for i in 0..7 {
+    for j in (i+1)..7 {
+        let exposure = base_k / (abs(i - j) as Scalar)
+        force spring(Bank[i], Bank[j]) 
+            k = exposure 
+            rest = 1.2
+    }
+}
+
+# -----------------------------------------------------------
+# 3. Default Wells: banks with weak fundamentals
+# These create attractive potential traps
+# -----------------------------------------------------------
+
+for i in 0..7 {
+    if (i < 2) {   # weakest banks
+        well DefaultTrap[i](p = Bank[i]) 
+            center = (i * 1.2, -2.0)
+            depth = 3.0
+            radius = 1.0
+    }
+}
+
+# -----------------------------------------------------------
+# 4. Market Oscillation: cyclic credit tightening
+# Oscillator modulates the downward pull
+# -----------------------------------------------------------
+
+loop oscillator MarketCycle {
+    freq = 0.3
+    amp  = cycle_amp
+
+    # Apply periodic downward force
+    force gravity(y = -amp * sin(time))
+}
+
+# -----------------------------------------------------------
+# 5. Simulation parameters
+# -----------------------------------------------------------
+
+simulate dt = 0.01 steps = 20000
+
+# -----------------------------------------------------------
+# 6. Detectors (stress test metrics)
+# -----------------------------------------------------------
+
+# Total system kinetic energy (market volatility)
+detect total_kinetic = sum_energy()
+
+# Distance of each bank to the “default region”
+for i in 0..7 {
+    detect risk[i] = distance(position(Bank[i]), (i * 1.2, -2.0))
+}
+
+# Count how many banks fell into default wells (approx)
+detect defaults = count_below_y(threshold = -1.0)
