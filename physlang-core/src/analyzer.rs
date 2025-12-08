@@ -54,12 +54,9 @@ pub fn analyze_program(program: &Program) -> Diagnostics {
             }
         }
         
-        // Check function body statements
-        let func_diagnostics = check_function_body(&func_decl, &program.functions);
-        diagnostics.extend(func_diagnostics.into());
     }
 
-    // Build environment for expression checking
+    // Build environment for expression checking (needed for function body checks)
     let env_lets: HashMap<String, &LetDecl> = program
         .lets
         .iter()
@@ -73,8 +70,19 @@ pub fn analyze_program(program: &Program) -> Diagnostics {
         .map(|func| (func.name.clone(), func))
         .collect();
     
+    // Now check function bodies (after we have env_lets)
+    for func_decl in &program.functions {
+        let func_diagnostics = check_function_body(func_decl, &program.functions, &env_lets);
+        diagnostics.extend(func_diagnostics.into());
+    }
+    
+    // Build a scope for top-level statements that includes global lets
+    let mut top_level_scope: HashMap<String, ()> = HashMap::new();
+    for name in env_lets.keys() {
+        top_level_scope.insert(name.clone(), ());
+    }
+    
     // Check top-level statements (function calls and control flow)
-    let mut top_level_lets = HashMap::new();
     for stmt in &program.top_level_calls {
         match stmt {
             Stmt::ExprCall { name, args } => {
@@ -92,7 +100,7 @@ pub fn analyze_program(program: &Program) -> Diagnostics {
                     }
                     // Check argument expressions
                     for arg in args {
-                        let expr_diagnostics = check_expr(arg, &env_lets);
+                        let expr_diagnostics = check_expr_with_scope(arg, &top_level_scope);
                         diagnostics.extend(expr_diagnostics.into());
                     }
                 } else {
@@ -104,7 +112,7 @@ pub fn analyze_program(program: &Program) -> Diagnostics {
             }
             // v0.8: Check top-level control flow statements
             _ => {
-                let stmt_diagnostics = check_stmt(stmt, &function_map, &mut top_level_lets);
+                let stmt_diagnostics = check_stmt(stmt, &function_map, &mut top_level_scope);
                 diagnostics.extend(stmt_diagnostics.into());
             }
         }
@@ -368,6 +376,9 @@ pub fn check_expr(expr: &Expr, env_lets: &HashMap<String, &LetDecl>) -> Diagnost
                 diagnostics.extend(arg_diagnostics.into());
             }
         }
+        Expr::StringLiteral(_) => {
+            // String literals are always valid
+        }
     }
 
     diagnostics
@@ -422,6 +433,7 @@ fn check_observable_in_condition(
 fn check_function_body(
     func: &FunctionDecl,
     all_functions: &[FunctionDecl],
+    global_lets: &HashMap<String, &LetDecl>,
 ) -> Diagnostics {
     let mut diagnostics = Diagnostics::new();
     
@@ -431,12 +443,22 @@ fn check_function_body(
         .map(|f| (f.name.clone(), f))
         .collect();
     
-    // Track local let bindings (empty for now, as we don't track params/lets in analyzer)
-    let mut local_lets = HashMap::new();
+    // Start scope with function parameters and global lets
+    let mut scope: HashMap<String, ()> = HashMap::new();
+    
+    // Add global lets to scope
+    for name in global_lets.keys() {
+        scope.insert(name.clone(), ());
+    }
+    
+    // Add function parameters to scope
+    for param in &func.params {
+        scope.insert(param.clone(), ());
+    }
     
     // Check all statements recursively
     for stmt in &func.body {
-        let stmt_diagnostics = check_stmt(stmt, &function_map, &mut local_lets);
+        let stmt_diagnostics = check_stmt(stmt, &function_map, &mut scope);
         diagnostics.extend(stmt_diagnostics.into());
     }
     
@@ -447,25 +469,25 @@ fn check_function_body(
 fn check_stmt(
     stmt: &Stmt,
     function_map: &HashMap<String, &FunctionDecl>,
-    local_lets: &mut HashMap<String, ()>,
+    scope: &mut HashMap<String, ()>,
 ) -> Diagnostics {
     let mut diagnostics = Diagnostics::new();
     
     match stmt {
         Stmt::Let { name, expr } => {
             // Check for duplicate local variable names
-            if local_lets.contains_key(name) {
-                diagnostics.push(Diagnostic::error(
-                    format!("duplicate local variable '{}'", name),
+            if scope.contains_key(name) {
+                diagnostics.push(Diagnostic::warning(
+                    format!("variable '{}' shadows previous binding", name),
                     None,
                 ));
             }
             
-            // Check expression (can reference params and previous local lets)
-            let expr_diagnostics = check_expr(expr, &HashMap::new());
+            // Check expression (can reference variables in current scope)
+            let expr_diagnostics = check_expr_with_scope(expr, scope);
             diagnostics.extend(expr_diagnostics.into());
             
-            local_lets.insert(name.clone(), ());
+            scope.insert(name.clone(), ());
         }
         Stmt::ExprCall { name, args } => {
             if let Some(called_func) = function_map.get(name) {
@@ -482,7 +504,7 @@ fn check_stmt(
                 }
                 // Check argument expressions
                 for arg in args {
-                    let expr_diagnostics = check_expr(arg, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(arg, scope);
                     diagnostics.extend(expr_diagnostics.into());
                 }
             } else {
@@ -494,28 +516,28 @@ fn check_stmt(
         }
         Stmt::Return(expr) => {
             // Check return expression
-            let expr_diagnostics = check_expr(expr, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(expr, scope);
             diagnostics.extend(expr_diagnostics.into());
         }
         Stmt::ParticleDecl(particle) => {
             // Check particle expressions
-            let expr_diagnostics = check_expr(&particle.position.0, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(&particle.position.0, scope);
             diagnostics.extend(expr_diagnostics.into());
-            let expr_diagnostics = check_expr(&particle.position.1, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(&particle.position.1, scope);
             diagnostics.extend(expr_diagnostics.into());
-            let expr_diagnostics = check_expr(&particle.mass, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(&particle.mass, scope);
             diagnostics.extend(expr_diagnostics.into());
         }
         Stmt::ForceDecl(force) => {
             match &force.kind {
                 crate::ast::ForceKind::Gravity { g } => {
-                    let expr_diagnostics = check_expr(g, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(g, scope);
                     diagnostics.extend(expr_diagnostics.into());
                 }
                 crate::ast::ForceKind::Spring { k, rest } => {
-                    let expr_diagnostics = check_expr(k, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(k, scope);
                     diagnostics.extend(expr_diagnostics.into());
-                    let expr_diagnostics = check_expr(rest, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(rest, scope);
                     diagnostics.extend(expr_diagnostics.into());
                 }
             }
@@ -528,11 +550,11 @@ fn check_stmt(
                     damping,
                     ..
                 } => {
-                    let expr_diagnostics = check_expr(cycles, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(cycles, scope);
                     diagnostics.extend(expr_diagnostics.into());
-                    let expr_diagnostics = check_expr(frequency, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(frequency, scope);
                     diagnostics.extend(expr_diagnostics.into());
-                    let expr_diagnostics = check_expr(damping, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(damping, scope);
                     diagnostics.extend(expr_diagnostics.into());
                 }
                 crate::ast::LoopKind::WhileCondition {
@@ -541,14 +563,14 @@ fn check_stmt(
                     damping,
                     ..
                 } => {
-                    let expr_diagnostics = check_expr(frequency, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(frequency, scope);
                     diagnostics.extend(expr_diagnostics.into());
-                    let expr_diagnostics = check_expr(damping, &HashMap::new());
+                    let expr_diagnostics = check_expr_with_scope(damping, scope);
                     diagnostics.extend(expr_diagnostics.into());
                     match condition {
                         ConditionExpr::LessThan(_, threshold)
                         | ConditionExpr::GreaterThan(_, threshold) => {
-                            let expr_diagnostics = check_expr(threshold, &HashMap::new());
+                            let expr_diagnostics = check_expr_with_scope(threshold, scope);
                             diagnostics.extend(expr_diagnostics.into());
                         }
                     }
@@ -556,9 +578,9 @@ fn check_stmt(
             }
         }
         Stmt::WellDecl(well) => {
-            let expr_diagnostics = check_expr(&well.threshold, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(&well.threshold, scope);
             diagnostics.extend(expr_diagnostics.into());
-            let expr_diagnostics = check_expr(&well.depth, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(&well.depth, scope);
             diagnostics.extend(expr_diagnostics.into());
         }
         Stmt::DetectorDecl(_) => {
@@ -571,20 +593,20 @@ fn check_stmt(
             else_branch,
         } => {
             // Check condition expression
-            let expr_diagnostics = check_expr(condition, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(condition, scope);
             diagnostics.extend(expr_diagnostics.into());
             
             // Check then branch in new scope
-            let mut then_lets = local_lets.clone();
+            let mut then_scope = scope.clone();
             for stmt in then_branch {
-                let stmt_diagnostics = check_stmt(stmt, function_map, &mut then_lets);
+                let stmt_diagnostics = check_stmt(stmt, function_map, &mut then_scope);
                 diagnostics.extend(stmt_diagnostics.into());
             }
             
             // Check else branch in new scope
-            let mut else_lets = local_lets.clone();
+            let mut else_scope = scope.clone();
             for stmt in else_branch {
-                let stmt_diagnostics = check_stmt(stmt, function_map, &mut else_lets);
+                let stmt_diagnostics = check_stmt(stmt, function_map, &mut else_scope);
                 diagnostics.extend(stmt_diagnostics.into());
             }
         }
@@ -595,23 +617,23 @@ fn check_stmt(
             body,
         } => {
             // Check start and end expressions
-            let expr_diagnostics = check_expr(start, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(start, scope);
             diagnostics.extend(expr_diagnostics.into());
-            let expr_diagnostics = check_expr(end, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(end, scope);
             diagnostics.extend(expr_diagnostics.into());
             
             // Check body in new scope with loop variable
-            let mut body_lets = local_lets.clone();
-            body_lets.insert(var_name.clone(), ()); // Loop variable is available in body
+            let mut body_scope = scope.clone();
+            body_scope.insert(var_name.clone(), ()); // Loop variable is available in body
             
             for stmt in body {
-                let stmt_diagnostics = check_stmt(stmt, function_map, &mut body_lets);
+                let stmt_diagnostics = check_stmt(stmt, function_map, &mut body_scope);
                 diagnostics.extend(stmt_diagnostics.into());
             }
         }
         Stmt::Match { scrutinee, arms } => {
             // Check scrutinee expression
-            let expr_diagnostics = check_expr(scrutinee, &HashMap::new());
+            let expr_diagnostics = check_expr_with_scope(scrutinee, scope);
             diagnostics.extend(expr_diagnostics.into());
             
             // Check arms
@@ -628,9 +650,9 @@ fn check_stmt(
                 }
                 
                 // Check body in new scope
-                let mut arm_lets = local_lets.clone();
+                let mut arm_scope = scope.clone();
                 for stmt in &arm.body {
-                    let stmt_diagnostics = check_stmt(stmt, function_map, &mut arm_lets);
+                    let stmt_diagnostics = check_stmt(stmt, function_map, &mut arm_scope);
                     diagnostics.extend(stmt_diagnostics.into());
                 }
             }
@@ -645,6 +667,71 @@ fn check_stmt(
         }
     }
     
+    diagnostics
+}
+
+/// Check an expression for validity using a scope
+fn check_expr_with_scope(expr: &Expr, scope: &HashMap<String, ()>) -> Diagnostics {
+    let mut diagnostics = Diagnostics::new();
+
+    match expr {
+        Expr::Literal(_) => {
+            // Literals are always valid
+        }
+        Expr::StringLiteral(_) => {
+            // String literals are always valid
+        }
+        Expr::Var(name) => {
+            if !scope.contains_key(name) {
+                diagnostics.push(Diagnostic::error(
+                    format!("unknown variable '{}'", name),
+                    None,
+                ));
+            }
+        }
+        Expr::UnaryMinus(e) => {
+            let inner_diagnostics = check_expr_with_scope(e, scope);
+            diagnostics.extend(inner_diagnostics.into());
+        }
+        Expr::Binary { left, right, .. } => {
+            let left_diagnostics = check_expr_with_scope(left, scope);
+            diagnostics.extend(left_diagnostics.into());
+            let right_diagnostics = check_expr_with_scope(right, scope);
+            diagnostics.extend(right_diagnostics.into());
+        }
+        Expr::Call { func, args } => {
+            // Check arity of built-in functions
+            let expected_arity = match func {
+                FuncName::Sin | FuncName::Cos | FuncName::Sqrt => 1,
+                FuncName::Clamp => 3,
+            };
+            
+            if args.len() != expected_arity {
+                diagnostics.push(Diagnostic::error(
+                    format!(
+                        "function '{:?}' expects {} argument(s), got {}",
+                        func, expected_arity, args.len()
+                    ),
+                    None,
+                ));
+            }
+            
+            // Check argument expressions
+            for arg in args {
+                let arg_diagnostics = check_expr_with_scope(arg, scope);
+                diagnostics.extend(arg_diagnostics.into());
+            }
+        }
+        Expr::UserCall { name: _, args } => {
+            // User-defined function calls - just check arguments
+            // Function existence is checked elsewhere
+            for arg in args {
+                let arg_diagnostics = check_expr_with_scope(arg, scope);
+                diagnostics.extend(arg_diagnostics.into());
+            }
+        }
+    }
+
     diagnostics
 }
 

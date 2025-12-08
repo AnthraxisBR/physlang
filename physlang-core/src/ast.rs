@@ -6,6 +6,8 @@
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(f32),
+    /// String literal (for particle names in function calls)
+    StringLiteral(String),
     Var(String),
     UnaryMinus(Box<Expr>),
     Binary {

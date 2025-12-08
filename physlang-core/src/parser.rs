@@ -1071,10 +1071,14 @@ fn parse_expr_add(s: &str, span: Option<Span>) -> Result<Expr, ParseError> {
             ')' => paren_depth += 1,
             '(' => paren_depth -= 1,
             '+' | '-' if paren_depth == 0 => {
-                // Make sure it's not a unary minus
-                if i > 0 {
-                    let prev_ch = s[..i].chars().last().unwrap();
-                    if prev_ch != ' ' && prev_ch != '(' && prev_ch != ',' {
+                // Make sure it's not a unary minus (at the start or after an operator/paren)
+                // Find the last non-space character before this position
+                let prev_non_space = s[..i].trim_end().chars().last();
+                if let Some(prev_ch) = prev_non_space {
+                    // It's binary if the previous non-space char is not an operator or open paren
+                    if prev_ch != '(' && prev_ch != ',' && prev_ch != '+' && prev_ch != '-' 
+                        && prev_ch != '*' && prev_ch != '/' && prev_ch != '=' && prev_ch != '<'
+                        && prev_ch != '>' && prev_ch != '!' {
                         op_pos = Some(i);
                         op_char = Some(ch);
                         break;
@@ -1164,6 +1168,12 @@ fn parse_expr_primary(s: &str, span: Option<Span>) -> Result<Expr, ParseError> {
     // Try parsing as float literal
     if let Ok(val) = s.parse::<f32>() {
         return Ok(Expr::Literal(val));
+    }
+    
+    // Try parsing as string literal: "..."
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        let content = &s[1..s.len()-1];
+        return Ok(Expr::StringLiteral(content.to_string()));
     }
     
     // Try parsing as function call: ident(...)
@@ -1551,6 +1561,7 @@ fn parse_if_stmt(
     trace_parse!("  if then branch: {} statements, after_then: line {}", then_branch.len(), after_then + 1);
     
     // Check for else
+    // The block may have stopped at "} else {" on the same line
     let mut else_branch = Vec::new();
     let mut next_line = after_then;
     
@@ -1558,7 +1569,24 @@ fn parse_if_stmt(
         let else_line = lines[after_then].trim();
         trace_parse!("  checking for else at line {}: '{}'", after_then + 1, else_line);
         
-        if else_line.starts_with("else") {
+        // Handle "} else {" on the same line (block stopped at this line without incrementing)
+        if else_line.starts_with("} else") {
+            trace_parse!("  -> found '}} else' on same line");
+            if else_line == "} else {" || else_line.starts_with("} else {") {
+                // Parse else block - the line has "} else {", treat it as block start
+                let (else_body, after_else) = parse_block(lines, after_then, ctx)?;
+                else_branch = else_body;
+                next_line = after_else;
+                trace_parse!("  -> else branch: {} statements, next_line: {}", else_branch.len(), next_line + 1);
+            } else if else_line == "} else" {
+                // "} else" alone, opening brace on next line
+                if after_then + 1 < lines.len() {
+                    let (else_body, after_else) = parse_block(lines, after_then + 1, ctx)?;
+                    else_branch = else_body;
+                    next_line = after_else;
+                }
+            }
+        } else if else_line.starts_with("else") {
             if else_line == "else" || else_line == "else {" || else_line.starts_with("else {") {
                 // Parse else block - pass the line with "else {" to parse_block
                 trace_parse!("  -> found else block");
@@ -1637,12 +1665,9 @@ fn parse_for_stmt(
     let start = parse_expr(start_str, Some(line_span))?;
     let end = parse_expr(end_str, Some(line_span))?;
     
-    // Parse body block
-    let body_start = if after_dotdot[brace_pos + 1..].trim().is_empty() {
-        start_idx + 1
-    } else {
-        start_idx
-    };
+    // Parse body block - pass the line with '{' to parse_block
+    let body_start = start_idx;
+    trace_parse!("  for body_start: line {}", body_start + 1);
     
     let (body, next_line) = parse_block(lines, body_start, ctx)?;
     

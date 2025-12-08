@@ -30,8 +30,10 @@ impl<'a> Default for EvalContext<'a> {
 pub struct FunctionEvalContext<'a> {
     /// Global let bindings
     pub global: &'a EvalContext<'a>,
-    /// Function parameters
+    /// Function parameters (numeric)
     pub params: HashMap<String, f32>,
+    /// String parameters (for particle names, etc.)
+    pub string_params: HashMap<String, String>,
     /// Local let bindings within the function
     pub local_lets: HashMap<String, f32>,
 }
@@ -41,6 +43,7 @@ impl<'a> FunctionEvalContext<'a> {
         Self {
             global,
             params: HashMap::new(),
+            string_params: HashMap::new(),
             local_lets: HashMap::new(),
         }
     }
@@ -54,12 +57,18 @@ impl<'a> FunctionEvalContext<'a> {
             .copied()
     }
     
+    /// Look up a string variable (for particle names)
+    pub fn lookup_string(&self, name: &str) -> Option<&String> {
+        self.string_params.get(name)
+    }
+    
     /// Clone this context to create a new scope (v0.8: for control flow)
     /// The new scope shares the same global context, params, and inherits local_lets
     pub fn clone_scope(&self) -> Self {
         Self {
             global: self.global,
             params: self.params.clone(),
+            string_params: self.string_params.clone(),
             local_lets: self.local_lets.clone(),
         }
     }
@@ -245,6 +254,14 @@ pub fn eval_expr_with_function_ctx(
             Err(EvalError::InvalidArgs(
                 format!("User-defined function '{}' cannot be called in this context. \
                         User-defined functions are executed during world-building phase.", name)
+            ))
+        }
+        
+        Expr::StringLiteral(s) => {
+            // String literals cannot be converted to f32
+            // They are used for particle names in function calls
+            Err(EvalError::InvalidArgs(
+                format!("String literal '{}' cannot be evaluated as a number", s)
             ))
         }
     }

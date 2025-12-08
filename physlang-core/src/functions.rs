@@ -130,17 +130,21 @@ fn execute_single_statement_with_user_calls(
         }
         Stmt::ExprCall { name, args } => {
             // Evaluate arguments with user call support
-            let mut arg_values = Vec::new();
+            // Handle string literals separately - they stay as strings
+            let mut arg_exprs = Vec::new();
             for arg in args {
-                let value = eval_expr_with_user_calls(arg, func_ctx, program, function_map)?;
-                arg_values.push(value);
+                match arg {
+                    Expr::StringLiteral(s) => {
+                        // Keep string literals as-is
+                        arg_exprs.push(Expr::StringLiteral(s.clone()));
+                    }
+                    _ => {
+                        // Evaluate numeric expressions
+                        let value = eval_expr_with_user_calls(arg, func_ctx, program, function_map)?;
+                        arg_exprs.push(Expr::Literal(value));
+                    }
+                }
             }
-            
-            // Convert to Expr::Literal for passing to function
-            let arg_exprs: Vec<Expr> = arg_values
-                .iter()
-                .map(|v| Expr::Literal(*v))
-                .collect();
             
             // Execute the called function
             execute_function_call(
@@ -163,6 +167,12 @@ fn execute_single_statement_with_user_calls(
             let mass = eval_expr_with_user_calls(&particle.mass, func_ctx, program, function_map)?;
             
             let mut new_particle = particle.clone();
+            
+            // Resolve particle name: check if it's a string parameter
+            if let Some(string_name) = func_ctx.string_params.get(&particle.name) {
+                new_particle.name = string_name.clone();
+            }
+            
             new_particle.position = (Expr::Literal(x), Expr::Literal(y));
             new_particle.mass = Expr::Literal(mass);
             
@@ -304,18 +314,24 @@ fn execute_function_call(
         ));
     }
 
-    // Evaluate arguments in caller's context (if any)
-    let mut arg_values = Vec::new();
-    for arg in args {
-        let value = eval_expr_with_function_ctx(arg, global_ctx, caller_ctx)
-            .map_err(|e| format!("Error evaluating argument: {}", e))?;
-        arg_values.push(value);
-    }
-
     // Create new function execution context for the called function
     let mut func_ctx = FunctionEvalContext::new(global_ctx);
-    for (param_name, arg_value) in func.params.iter().zip(arg_values.iter()) {
-        func_ctx.params.insert(param_name.clone(), *arg_value);
+    
+    // Evaluate arguments and store in context
+    // Handle string literals separately
+    for (param_name, arg) in func.params.iter().zip(args.iter()) {
+        match arg {
+            Expr::StringLiteral(s) => {
+                // Store string parameter
+                func_ctx.string_params.insert(param_name.clone(), s.clone());
+            }
+            _ => {
+                // Evaluate numeric expression
+                let value = eval_expr_with_function_ctx(arg, global_ctx, caller_ctx)
+                    .map_err(|e| format!("Error evaluating argument '{}': {}", param_name, e))?;
+                func_ctx.params.insert(param_name.clone(), value);
+            }
+        }
     }
 
     // Execute function body with support for user-defined function calls
