@@ -5,8 +5,227 @@
 
 use crate::ast::{Expr, FunctionDecl, Program, Stmt};
 use crate::diagnostics::Diagnostic;
-use crate::eval::{eval_expr_with_function_ctx, EvalContext, FunctionEvalContext};
+use crate::eval::{eval_expr_with_function_ctx, EvalContext, EvalError, FunctionEvalContext};
 use std::collections::HashMap;
+
+/// Evaluate an expression that may contain user-defined function calls
+/// This function handles both built-in functions (via eval_expr_with_function_ctx)
+/// and user-defined functions (by executing them and returning their result)
+fn eval_expr_with_user_calls(
+    expr: &Expr,
+    func_ctx: &mut FunctionEvalContext<'_>,
+    program: &mut Program,
+    function_map: &HashMap<String, &FunctionDecl>,
+) -> Result<f32, String> {
+    match expr {
+        Expr::UserCall { name, args } => {
+            // This is a user-defined function call that should return a value
+            // Evaluate arguments first
+            let mut arg_values = Vec::new();
+            for arg in args {
+                let value = eval_expr_with_user_calls(arg, func_ctx, program, function_map)?;
+                arg_values.push(value);
+            }
+            
+            // Look up the function
+            let func = function_map
+                .get(name.as_str())
+                .ok_or_else(|| format!("Unknown function '{}'", name))?;
+            
+            if arg_values.len() != func.params.len() {
+                return Err(format!(
+                    "Function '{}' expects {} argument(s), got {}",
+                    name,
+                    func.params.len(),
+                    arg_values.len()
+                ));
+            }
+            
+            // Create new function context for the called function
+            let mut new_func_ctx = FunctionEvalContext::new(func_ctx.global);
+            for (param_name, arg_value) in func.params.iter().zip(arg_values.iter()) {
+                new_func_ctx.params.insert(param_name.clone(), *arg_value);
+            }
+            
+            // Execute function body and get return value
+            match execute_statements_with_user_calls(&func.body, &mut new_func_ctx, program, function_map)? {
+                Some(value) => Ok(value),
+                None => Err(format!("Function '{}' did not return a value", name)),
+            }
+        }
+        Expr::Binary { op, left, right } => {
+            let left_val = eval_expr_with_user_calls(left, func_ctx, program, function_map)?;
+            let right_val = eval_expr_with_user_calls(right, func_ctx, program, function_map)?;
+            
+            use crate::ast::BinaryOp;
+            match op {
+                BinaryOp::Add => Ok(left_val + right_val),
+                BinaryOp::Sub => Ok(left_val - right_val),
+                BinaryOp::Mul => Ok(left_val * right_val),
+                BinaryOp::Div => {
+                    if right_val == 0.0 {
+                        return Err("Division by zero".to_string());
+                    }
+                    Ok(left_val / right_val)
+                }
+                BinaryOp::GreaterThan => Ok(if left_val > right_val { 1.0 } else { 0.0 }),
+                BinaryOp::LessThan => Ok(if left_val < right_val { 1.0 } else { 0.0 }),
+                BinaryOp::GreaterEqual => Ok(if left_val >= right_val { 1.0 } else { 0.0 }),
+                BinaryOp::LessEqual => Ok(if left_val <= right_val { 1.0 } else { 0.0 }),
+                BinaryOp::Equal => Ok(if left_val == right_val { 1.0 } else { 0.0 }),
+                BinaryOp::NotEqual => Ok(if left_val != right_val { 1.0 } else { 0.0 }),
+            }
+        }
+        Expr::UnaryMinus(inner) => {
+            let val = eval_expr_with_user_calls(inner, func_ctx, program, function_map)?;
+            Ok(-val)
+        }
+        // For other expressions, fall back to the standard eval
+        _ => eval_expr_with_function_ctx(expr, func_ctx.global, Some(func_ctx))
+            .map_err(|e| format!("{}", e))
+    }
+}
+
+/// Execute statements with support for user-defined function calls in expressions
+fn execute_statements_with_user_calls(
+    stmts: &[Stmt],
+    func_ctx: &mut FunctionEvalContext<'_>,
+    program: &mut Program,
+    function_map: &HashMap<String, &FunctionDecl>,
+) -> Result<Option<f32>, String> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { name, expr } => {
+                let value = eval_expr_with_user_calls(expr, func_ctx, program, function_map)?;
+                func_ctx.local_lets.insert(name.clone(), value);
+            }
+            Stmt::Return(expr) => {
+                let value = eval_expr_with_user_calls(expr, func_ctx, program, function_map)?;
+                return Ok(Some(value));
+            }
+            // For other statements, delegate to execute_statements
+            other => {
+                // We need to handle this specially to support user calls
+                if let Some(result) = execute_single_statement_with_user_calls(other, func_ctx, program, function_map)? {
+                    return Ok(Some(result));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Execute a single statement with user call support
+fn execute_single_statement_with_user_calls(
+    stmt: &Stmt,
+    func_ctx: &mut FunctionEvalContext<'_>,
+    program: &mut Program,
+    function_map: &HashMap<String, &FunctionDecl>,
+) -> Result<Option<f32>, String> {
+    match stmt {
+        Stmt::Let { name, expr } => {
+            let value = eval_expr_with_user_calls(expr, func_ctx, program, function_map)?;
+            func_ctx.local_lets.insert(name.clone(), value);
+            Ok(None)
+        }
+        Stmt::ExprCall { name, args } => {
+            // Evaluate arguments with user call support
+            let mut arg_values = Vec::new();
+            for arg in args {
+                let value = eval_expr_with_user_calls(arg, func_ctx, program, function_map)?;
+                arg_values.push(value);
+            }
+            
+            // Convert to Expr::Literal for passing to function
+            let arg_exprs: Vec<Expr> = arg_values
+                .iter()
+                .map(|v| Expr::Literal(*v))
+                .collect();
+            
+            // Execute the called function
+            execute_function_call(
+                name,
+                &arg_exprs,
+                function_map,
+                func_ctx.global,
+                program,
+                Some(func_ctx),
+            )?;
+            Ok(None)
+        }
+        Stmt::Return(expr) => {
+            let value = eval_expr_with_user_calls(expr, func_ctx, program, function_map)?;
+            Ok(Some(value))
+        }
+        Stmt::ParticleDecl(particle) => {
+            let x = eval_expr_with_user_calls(&particle.position.0, func_ctx, program, function_map)?;
+            let y = eval_expr_with_user_calls(&particle.position.1, func_ctx, program, function_map)?;
+            let mass = eval_expr_with_user_calls(&particle.mass, func_ctx, program, function_map)?;
+            
+            let mut new_particle = particle.clone();
+            new_particle.position = (Expr::Literal(x), Expr::Literal(y));
+            new_particle.mass = Expr::Literal(mass);
+            
+            program.particles.push(new_particle);
+            Ok(None)
+        }
+        Stmt::ForceDecl(force) => {
+            let mut new_force = force.clone();
+            match &mut new_force.kind {
+                crate::ast::ForceKind::Gravity { g } => {
+                    let g_val = eval_expr_with_user_calls(g, func_ctx, program, function_map)?;
+                    *g = Expr::Literal(g_val);
+                }
+                crate::ast::ForceKind::Spring { k, rest } => {
+                    let k_val = eval_expr_with_user_calls(k, func_ctx, program, function_map)?;
+                    let rest_val = eval_expr_with_user_calls(rest, func_ctx, program, function_map)?;
+                    *k = Expr::Literal(k_val);
+                    *rest = Expr::Literal(rest_val);
+                }
+            }
+            program.forces.push(new_force);
+            Ok(None)
+        }
+        Stmt::If { condition, then_branch, else_branch } => {
+            let cond_val = eval_expr_with_user_calls(condition, func_ctx, program, function_map)?;
+            let branch = if cond_val != 0.0 { then_branch } else { else_branch };
+            execute_statements_with_user_calls(branch, func_ctx, program, function_map)
+        }
+        Stmt::For { var_name, start, end, body } => {
+            let start_val = eval_expr_with_user_calls(start, func_ctx, program, function_map)? as i64;
+            let end_val = eval_expr_with_user_calls(end, func_ctx, program, function_map)? as i64;
+            
+            for i in start_val..end_val {
+                func_ctx.local_lets.insert(var_name.clone(), i as f32);
+                if let Some(result) = execute_statements_with_user_calls(body, func_ctx, program, function_map)? {
+                    return Ok(Some(result));
+                }
+            }
+            func_ctx.local_lets.remove(var_name);
+            Ok(None)
+        }
+        Stmt::Match { scrutinee, arms } => {
+            let scrutinee_val = eval_expr_with_user_calls(scrutinee, func_ctx, program, function_map)? as i64;
+            
+            for arm in arms {
+                let matches = match &arm.pattern {
+                    crate::ast::MatchPattern::Literal(val) => *val == scrutinee_val,
+                    crate::ast::MatchPattern::Wildcard => true,
+                };
+                
+                if matches {
+                    return execute_statements_with_user_calls(&arm.body, func_ctx, program, function_map);
+                }
+            }
+            Ok(None)
+        }
+        // Delegate remaining statements to old handler
+        _ => {
+            // Use the old execute_statements for remaining cases
+            execute_statements(&[stmt.clone()], func_ctx, program, function_map)
+        }
+    }
+}
 
 /// Execute all functions in the program, generating world-building statements
 pub fn execute_functions(
@@ -47,7 +266,7 @@ pub fn execute_functions(
             _ => {
                 // Create a minimal function context for top-level execution
                 let mut top_ctx = FunctionEvalContext::new(eval_ctx);
-                match execute_statements(&[stmt], &mut top_ctx, program, &function_map) {
+                match execute_statements_with_user_calls(&[stmt], &mut top_ctx, program, &function_map) {
                     Ok(_) => {}
                     Err(e) => {
                         diagnostics.push(Diagnostic::error(
@@ -99,8 +318,8 @@ fn execute_function_call(
         func_ctx.params.insert(param_name.clone(), *arg_value);
     }
 
-    // Execute function body
-    execute_statements(&func.body, &mut func_ctx, program, function_map)?;
+    // Execute function body with support for user-defined function calls
+    execute_statements_with_user_calls(&func.body, &mut func_ctx, program, function_map)?;
 
     Ok(())
 }

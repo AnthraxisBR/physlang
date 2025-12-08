@@ -1,0 +1,175 @@
+# Comprehensive PhysLang Example
+# This example demonstrates all features available in PhysLang v0.8
+
+# ============================================================================
+# 1. VARIABLES AND EXPRESSIONS (v0.6)
+# ============================================================================
+
+# Global constants using let bindings
+let pi = 3.14159
+let base_mass = 1.0
+let spring_strength = 2.5
+let gravity_strength = 0.5
+
+# Expressions with arithmetic operators
+let half_pi = pi / 2.0
+let double_mass = base_mass * 2.0
+let sqrt_two = sqrt(2.0)
+
+# Using built-in functions: sin, cos, sqrt, clamp
+let clamped_value = clamp(15.0, 0.0, 10.0)  # Results in 10.0
+let sin_value = sin(pi / 4.0)
+let cos_value = cos(pi / 4.0)
+
+# ============================================================================
+# 2. USER-DEFINED FUNCTIONS (v0.7)
+# ============================================================================
+
+# Function to create a particle with calculated position
+fn create_particle(name, x, y, mass) {
+    particle name at (x, y) mass mass
+}
+
+# Function with local variables and expressions
+fn create_spring_connection(a, b, k_multiplier) {
+    let k = spring_strength * k_multiplier
+    let rest_length = sqrt_two * 2.0
+    force spring(a, b) k = k rest = rest_length
+}
+
+# Function that returns a value (for use in expressions)
+fn calculate_mass(base, multiplier) {
+    let result = base * multiplier
+    return result
+}
+
+# Function with conditional logic (v0.8)
+fn create_conditional_particle(name, x, y, regime) {
+    if regime > 0 {
+        let mass = calculate_mass(base_mass, 2.0)
+        particle name at (x, y) mass mass
+    } else {
+        particle name at (x, y) mass base_mass
+    }
+}
+
+# ============================================================================
+# 3. LANGUAGE-LEVEL CONTROL FLOW (v0.8)
+# ============================================================================
+
+# Conditional world generation with if/else
+let risk_level = 0.7
+if risk_level > 0.5 {
+    # High risk: create strong connections
+    create_particle("high_risk_a", 0.0, 0.0, base_mass * 1.5)
+    create_particle("high_risk_b", 3.0, 0.0, base_mass * 1.5)
+    create_spring_connection("high_risk_a", "high_risk_b", 2.0)
+} else {
+    # Low risk: create weak connections
+    create_particle("low_risk_a", 0.0, 0.0, base_mass)
+    create_particle("low_risk_b", 3.0, 0.0, base_mass)
+    create_spring_connection("low_risk_a", "low_risk_b", 0.5)
+}
+
+# For loops for parametric world generation
+# Create particles with calculated positions using loop variables
+# Note: In practice, you'd generate unique names dynamically
+# For this demo, we create a few particles manually to show the concept
+for i in 0..3 {
+    let x = i * 1.5
+    let y = sin(i * 0.5) * 2.0
+    let mass = base_mass + i * 0.1
+    # Demonstrate loop variable usage in expressions
+    # Create particles directly (match would require unique names per iteration)
+    if i == 0 {
+        create_particle("chain_0", x, y, mass)
+    } else {
+        if i == 1 {
+            create_particle("chain_1", x, y, mass)
+        } else {
+            create_particle("chain_2", x, y, mass)
+        }
+    }
+}
+
+# Match statement for regime-based configuration
+let regime = 1
+match regime {
+    0 => {
+        # Normal regime: mild forces
+        create_particle("normal_p1", -5.0, 0.0, base_mass)
+        create_particle("normal_p2", 5.0, 0.0, base_mass)
+        force spring("normal_p1", "normal_p2") k = spring_strength rest = 8.0
+    }
+    1 => {
+        # Stress regime: strong forces
+        create_particle("stress_p1", -5.0, 0.0, base_mass * 2.0)
+        create_particle("stress_p2", 5.0, 0.0, base_mass * 2.0)
+        force spring("stress_p1", "stress_p2") k = spring_strength * 3.0 rest = 8.0
+    }
+    _ => {
+        # Fallback: default configuration
+        create_particle("fallback_p", 0.0, 0.0, base_mass)
+    }
+}
+
+# ============================================================================
+# 4. PHYSICS-LEVEL CONTROL FLOW (v0.2)
+# ============================================================================
+
+# For-loop via oscillator (physics-level)
+particle oscillator_target at (10.0, 10.0) mass 1.0
+
+loop for 5 cycles with frequency 2.0 damping 0.1 on oscillator_target {
+    force push(oscillator_target) magnitude 0.3 direction (1.0, 0.0)
+}
+
+# While-loop via physical condition
+particle conditional_target at (15.0, 15.0) mass 1.0
+
+loop while position(conditional_target).x < 20.0 with frequency 1.0 damping 0.05 on conditional_target {
+    force push(conditional_target) magnitude 0.2 direction (1.0, 0.0)
+}
+
+# Potential well as conditional
+particle well_particle at (0.0, 5.0) mass 1.0
+
+well threshold_well on well_particle if position(well_particle).y >= 3.0 depth 2.0
+
+# ============================================================================
+# 5. FORCES
+# ============================================================================
+
+# Create some particles for force demonstrations
+particle gravity_a at (-10.0, 0.0) mass 2.0
+particle gravity_b at (10.0, 0.0) mass 2.0
+
+# Gravity force with expression
+force gravity(gravity_a, gravity_b) G = gravity_strength
+
+# Spring force with expressions
+particle spring_a at (-5.0, -5.0) mass 1.0
+particle spring_b at (5.0, 5.0) mass 1.0
+force spring(spring_a, spring_b) k = spring_strength * sqrt_two rest = sqrt(50.0)
+
+# ============================================================================
+# 6. DETECTORS
+# ============================================================================
+
+# Position detector
+detect oscillator_pos = position(oscillator_target)
+
+# Distance detector
+detect gravity_distance = distance(gravity_a, gravity_b)
+detect spring_distance = distance(spring_a, spring_b)
+
+# ============================================================================
+# 7. SIMULATION CONFIGURATION
+# ============================================================================
+
+# Simulation with expressions
+let dt = 0.01
+let total_time = 10.0
+let steps = total_time / dt
+
+simulate dt = dt steps = steps

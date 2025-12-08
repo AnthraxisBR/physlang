@@ -13,8 +13,14 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    /// Built-in function call (sin, cos, sqrt, clamp)
     Call {
         func: FuncName,
+        args: Vec<Expr>,
+    },
+    /// User-defined function call (v0.7+)
+    UserCall {
+        name: String,
         args: Vec<Expr>,
     },
 }

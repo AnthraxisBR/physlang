@@ -6,13 +6,16 @@ use crate::ast::{
 use crate::diagnostics::Span;
 use thiserror::Error;
 
-/// Parse error with optional span information
+/// Parse error with detailed location information
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("{message}")]
     SyntaxError {
         message: String,
         span: Option<Span>,
+        line_number: Option<usize>,
+        line_content: Option<String>,
+        context: Option<String>,
     },
 }
 
@@ -21,6 +24,40 @@ impl ParseError {
         Self::SyntaxError {
             message: message.into(),
             span,
+            line_number: None,
+            line_content: None,
+            context: None,
+        }
+    }
+    
+    pub fn with_line_info(
+        message: impl Into<String>,
+        span: Option<Span>,
+        line_number: usize,
+        line_content: impl Into<String>,
+    ) -> Self {
+        Self::SyntaxError {
+            message: message.into(),
+            span,
+            line_number: Some(line_number + 1), // Convert 0-indexed to 1-indexed
+            line_content: Some(line_content.into()),
+            context: None,
+        }
+    }
+    
+    pub fn with_context(
+        message: impl Into<String>,
+        span: Option<Span>,
+        line_number: usize,
+        line_content: impl Into<String>,
+        context: impl Into<String>,
+    ) -> Self {
+        Self::SyntaxError {
+            message: message.into(),
+            span,
+            line_number: Some(line_number + 1), // Convert 0-indexed to 1-indexed
+            line_content: Some(line_content.into()),
+            context: Some(context.into()),
         }
     }
 
@@ -28,6 +65,9 @@ impl ParseError {
         Self::SyntaxError {
             message: message.into(),
             span: None,
+            line_number: None,
+            line_content: None,
+            context: None,
         }
     }
 
@@ -36,12 +76,74 @@ impl ParseError {
             Self::SyntaxError { span, .. } => *span,
         }
     }
+    
+    pub fn line_number(&self) -> Option<usize> {
+        match self {
+            Self::SyntaxError { line_number, .. } => *line_number,
+        }
+    }
+    
+    pub fn line_content(&self) -> Option<&str> {
+        match self {
+            Self::SyntaxError { line_content, .. } => line_content.as_deref(),
+        }
+    }
+    
+    pub fn context(&self) -> Option<&str> {
+        match self {
+            Self::SyntaxError { context, .. } => context.as_deref(),
+        }
+    }
+    
+    /// Format a detailed error message with source location
+    pub fn format_detailed(&self) -> String {
+        let mut result = String::new();
+        
+        // Add context if available
+        if let Some(ctx) = self.context() {
+            result.push_str(&format!("[{}] ", ctx));
+        }
+        
+        // Add main message
+        match self {
+            Self::SyntaxError { message, .. } => {
+                result.push_str(message);
+            }
+        }
+        
+        // Add line info
+        if let Some(line_num) = self.line_number() {
+            result.push_str(&format!("\n  --> line {}", line_num));
+        }
+        
+        // Add line content
+        if let Some(line_content) = self.line_content() {
+            result.push_str(&format!("\n  | {}", line_content));
+        }
+        
+        result
+    }
+}
+
+/// Check if verbose parsing is enabled via PHYSLANG_PARSE_TRACE env var
+fn is_trace_enabled() -> bool {
+    std::env::var("PHYSLANG_PARSE_TRACE").is_ok()
+}
+
+/// Log a trace message if tracing is enabled
+macro_rules! trace_parse {
+    ($($arg:tt)*) => {
+        if is_trace_enabled() {
+            eprintln!("[PARSE] {}", format!($($arg)*));
+        }
+    };
 }
 
 /// Helper to track byte offsets while parsing
 struct ParseContext {
     #[allow(dead_code)]
     source: String,
+    lines: Vec<String>,
     line_offsets: Vec<usize>, // Byte offset of start of each line
 }
 
@@ -57,6 +159,7 @@ impl ParseContext {
         }
         Self {
             source: source.to_string(),
+            lines: source.lines().map(|s| s.to_string()).collect(),
             line_offsets,
         }
     }
@@ -82,10 +185,37 @@ impl ParseContext {
         let end = self.line_start(line + 1);
         Span::new(start, end)
     }
+    
+    /// Get line content by index (0-indexed)
+    fn get_line(&self, line: usize) -> &str {
+        self.lines.get(line).map(|s| s.as_str()).unwrap_or("")
+    }
+    
+    /// Create a detailed parse error with line information
+    fn error(&self, message: impl Into<String>, line: usize, context: impl Into<String>) -> ParseError {
+        ParseError::with_context(
+            message,
+            Some(self.full_line_span(line)),
+            line,
+            self.get_line(line),
+            context,
+        )
+    }
+    
+    /// Create a simple parse error with line information
+    fn error_simple(&self, message: impl Into<String>, line: usize) -> ParseError {
+        ParseError::with_line_info(
+            message,
+            Some(self.full_line_span(line)),
+            line,
+            self.get_line(line),
+        )
+    }
 }
 
 /// Parse a PhysLang program from source code
 pub fn parse_program(source: &str) -> Result<Program, ParseError> {
+    trace_parse!("Starting parse_program");
     let ctx = ParseContext::new(source);
     let mut lets = Vec::new();
     let mut functions = Vec::new();
@@ -108,45 +238,63 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
             continue;
         }
 
+        trace_parse!("Line {}: parsing '{}'", i + 1, line);
+
         if line.starts_with("let ") {
+            trace_parse!("  -> let declaration");
             lets.push(parse_let(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("fn ") {
+            trace_parse!("  -> function declaration");
             let (func_decl, next_line) = parse_function(&lines, i, &ctx)?;
+            trace_parse!("  -> function '{}' parsed, next line: {}", func_decl.name, next_line + 1);
             functions.push(func_decl);
             i = next_line;
         } else if line.starts_with("particle ") {
+            trace_parse!("  -> particle declaration");
             particles.push(parse_particle(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("force ") && !line.contains("push") {
+            trace_parse!("  -> force declaration");
             forces.push(parse_force(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("simulate ") {
+            trace_parse!("  -> simulate declaration");
             simulate = Some(parse_simulate(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("detect ") {
+            trace_parse!("  -> detect declaration");
             detectors.push(parse_detector(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("loop ") {
+            trace_parse!("  -> loop declaration");
             let (loop_decl, next_line) = parse_loop(&lines, i, &ctx)?;
+            trace_parse!("  -> loop parsed, next line: {}", next_line + 1);
             loops.push(loop_decl);
             i = next_line;
         } else if line.starts_with("well ") {
+            trace_parse!("  -> well declaration");
             wells.push(parse_well(line, Some(line_span))?);
             i += 1;
         } else if line.starts_with("if ") {
             // v0.8: Top-level if statement
+            trace_parse!("  -> if statement");
             let (stmt, next_line) = parse_if_stmt(&lines, i, &ctx)?;
+            trace_parse!("  -> if parsed, next line: {}", next_line + 1);
             top_level_calls.push(stmt);
             i = next_line;
         } else if line.starts_with("for ") {
             // v0.8: Top-level for loop
+            trace_parse!("  -> for loop");
             let (stmt, next_line) = parse_for_stmt(&lines, i, &ctx)?;
+            trace_parse!("  -> for parsed, next line: {}", next_line + 1);
             top_level_calls.push(stmt);
             i = next_line;
         } else if line.starts_with("match ") {
             // v0.8: Top-level match statement
+            trace_parse!("  -> match statement");
             let (stmt, next_line) = parse_match_stmt(&lines, i, &ctx)?;
+            trace_parse!("  -> match parsed, next line: {}", next_line + 1);
             top_level_calls.push(stmt);
             i = next_line;
         } else {
@@ -154,6 +302,7 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
             if let Some(paren_pos) = line.find('(') {
                 let func_name = line[..paren_pos].trim();
                 if is_valid_identifier(func_name) {
+                    trace_parse!("  -> function call: {}", func_name);
                     // This looks like a function call
                     let rest = &line[paren_pos..];
                     if let Some(paren_end) = rest.find(')') {
@@ -177,9 +326,10 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
                 }
             }
             
-            return Err(ParseError::new(
-                format!("Unexpected token: {}", line.split_whitespace().next().unwrap_or("")),
-                Some(line_span),
+            return Err(ctx.error(
+                format!("Unexpected token: '{}'", line.split_whitespace().next().unwrap_or("")),
+                i,
+                "top-level parsing",
             ));
         }
     }
@@ -1040,30 +1190,37 @@ fn parse_expr_primary(s: &str, span: Option<Span>) -> Result<Expr, ParseError> {
         
         if let Some(end) = end_pos {
             let args_str = &rest[1..end];
-            let func = match func_name {
-                "sin" => FuncName::Sin,
-                "cos" => FuncName::Cos,
-                "sqrt" => FuncName::Sqrt,
-                "clamp" => FuncName::Clamp,
-                _ => {
-                    return Err(ParseError::new(
-                        format!("Unknown function '{}'", func_name),
-                        span,
-                    ));
-                }
-            };
             
-            // Parse arguments
+            // Parse arguments (handle nested parentheses correctly)
             let args = if args_str.trim().is_empty() {
                 Vec::new()
             } else {
-                args_str
-                    .split(',')
-                    .map(|arg| parse_expr(arg.trim(), span))
-                    .collect::<Result<Vec<_>, _>>()?
+                parse_comma_separated_exprs(args_str, span)?
             };
             
-            return Ok(Expr::Call { func, args });
+            // Check if it's a built-in function
+            let builtin_func = match func_name {
+                "sin" => Some(FuncName::Sin),
+                "cos" => Some(FuncName::Cos),
+                "sqrt" => Some(FuncName::Sqrt),
+                "clamp" => Some(FuncName::Clamp),
+                _ => None,
+            };
+            
+            if let Some(func) = builtin_func {
+                return Ok(Expr::Call { func, args });
+            } else if is_valid_identifier(func_name) {
+                // User-defined function call
+                return Ok(Expr::UserCall { 
+                    name: func_name.to_string(), 
+                    args,
+                });
+            } else {
+                return Err(ParseError::new(
+                    format!("Invalid function name: '{}'", func_name),
+                    span,
+                ));
+            }
         }
     }
     
@@ -1084,6 +1241,40 @@ fn parse_expr_primary(s: &str, span: Option<Span>) -> Result<Expr, ParseError> {
     ))
 }
 
+
+/// Parse comma-separated expressions, handling nested parentheses correctly
+fn parse_comma_separated_exprs(s: &str, span: Option<Span>) -> Result<Vec<Expr>, ParseError> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut paren_depth = 0;
+    
+    for ch in s.chars() {
+        match ch {
+            '(' => {
+                paren_depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                paren_depth -= 1;
+                current.push(ch);
+            }
+            ',' if paren_depth == 0 => {
+                if !current.trim().is_empty() {
+                    args.push(parse_expr(current.trim(), span)?);
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    
+    // Don't forget the last argument
+    if !current.trim().is_empty() {
+        args.push(parse_expr(current.trim(), span)?);
+    }
+    
+    Ok(args)
+}
 
 /// Check if a string is a valid identifier
 fn is_valid_identifier(s: &str) -> bool {
@@ -1174,7 +1365,9 @@ fn parse_function(
     // Find opening brace (could be on same line or next line)
     let after_paren = &rest[paren_end + 1..].trim();
     let body_start = if after_paren.starts_with('{') {
-        start_idx + 1
+        // Opening brace on same line as function declaration: "fn foo() {"
+        // Pass the same line to parse_block so it can see the '{'
+        start_idx
     } else if after_paren.is_empty() {
         // Opening brace on next line
         if start_idx + 1 >= lines.len() {
@@ -1190,13 +1383,15 @@ fn parse_function(
                 Some(line_span),
             ));
         }
-        start_idx + 2
+        start_idx + 1
     } else {
         return Err(ParseError::new(
             format!("Expected '{{' after function declaration: {}", line),
             Some(line_span),
         ));
     };
+    
+    trace_parse!("  function body_start: line {}", body_start + 1);
     
     // Parse function body (statements until closing brace)
     let (body, next_line) = parse_block(lines, body_start, ctx)?;
@@ -1217,6 +1412,7 @@ fn parse_block(
     start_idx: usize,
     ctx: &ParseContext,
 ) -> Result<(Vec<Stmt>, usize), ParseError> {
+    trace_parse!("parse_block starting at line {}", start_idx + 1);
     let mut stmts = Vec::new();
     let mut i = start_idx;
     let mut brace_count = 0;
@@ -1224,20 +1420,35 @@ fn parse_block(
     // Check if we need to skip opening brace
     if i < lines.len() {
         let first_line = lines[i].trim();
+        trace_parse!("  block first_line: '{}'", first_line);
+        
         if first_line == "{" || first_line.starts_with("{") {
+            trace_parse!("  -> found opening brace at start");
             brace_count = 1;
             if first_line.len() > 1 {
                 // Opening brace with content on same line
                 let after_brace = first_line[1..].trim();
                 if !after_brace.is_empty() && !after_brace.starts_with('#') {
+                    trace_parse!("  -> content after brace: '{}'", after_brace);
                     // Try to parse statement on same line
                     let (stmt, _) = parse_stmt(&[after_brace], 0, ctx)?;
                     stmts.push(stmt);
                 }
             }
             i += 1;
+        } else if first_line.ends_with('{') && !first_line.starts_with('#') {
+            // Line ends with '{' (e.g., "pattern => {" or "if condition {")
+            // Treat '{' as opening brace and move to next line
+            // Don't try to parse the line as a statement - it's just a brace opener
+            trace_parse!("  -> line ends with '{{', treating as block start");
+            brace_count = 1;
+            i += 1;
+        } else {
+            trace_parse!("  -> WARNING: block doesn't start with '{{', first_line = '{}'", first_line);
         }
     }
+    
+    trace_parse!("  block parsing statements, brace_count={}, starting at line {}", brace_count, i + 1);
     
     // Parse statements until closing brace
     while i < lines.len() && brace_count > 0 {
@@ -1248,47 +1459,61 @@ fn parse_block(
             continue;
         }
         
-        if line == "}" {
+        trace_parse!("  block line {}: '{}' (brace_count={})", i + 1, line, brace_count);
+        
+        // Check for closing brace of the block itself
+        // Handle both "}" alone and "} else {" (for if-else statements)
+        if line == "}" || line.starts_with("} else") {
             brace_count -= 1;
+            trace_parse!("  -> closing brace found, brace_count now {}", brace_count);
             if brace_count == 0 {
-                i += 1;
+                // Don't increment i - let the caller handle "} else {" or move past "}"
+                if line == "}" {
+                    i += 1;
+                }
+                // For "} else {", we leave i pointing at this line so the caller can process else
                 break;
             }
-        } else if line.ends_with('{') {
-            brace_count += 1;
+            i += 1;
+            continue;
         }
         
-        if brace_count > 0 {
-            match parse_stmt(lines, i, ctx) {
-                Ok((stmt, next_i)) => {
-                    stmts.push(stmt);
-                    i = next_i;
-                }
-                Err(e) => {
-                    // If it's not a statement, it might be a closing brace
-                    if line == "}" {
-                        brace_count -= 1;
-                        if brace_count == 0 {
+        // Try to parse as a statement
+        trace_parse!("  -> attempting to parse as statement");
+        match parse_stmt(lines, i, ctx) {
+            Ok((stmt, next_i)) => {
+                trace_parse!("  -> parsed statement, next line: {}", next_i + 1);
+                stmts.push(stmt);
+                i = next_i;
+            }
+            Err(e) => {
+                trace_parse!("  -> parse_stmt failed: {}", e);
+                // If it's not a statement, it might be a closing brace variant
+                if line == "}" || line.starts_with("} else") {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        if line == "}" {
                             i += 1;
-                            break;
                         }
-                    } else {
-                        return Err(e);
+                        break;
                     }
+                    i += 1;
+                } else {
+                    return Err(e);
                 }
             }
-        } else {
-            i += 1;
         }
     }
     
     if brace_count > 0 {
-        return Err(ParseError::new(
-            "Unclosed function body".to_string(),
-            Some(ctx.full_line_span(start_idx)),
+        return Err(ctx.error(
+            format!("Unclosed block (brace_count={}, last line={})", brace_count, i + 1),
+            start_idx,
+            "parse_block",
         ));
     }
     
+    trace_parse!("  parse_block complete, {} statements, ended at line {}", stmts.len(), i + 1);
     Ok((stmts, i))
 }
 
@@ -1301,27 +1526,29 @@ fn parse_if_stmt(
     let line = lines[start_idx].trim();
     let line_span = ctx.full_line_span(start_idx);
     
+    trace_parse!("parse_if_stmt starting at line {}: '{}'", start_idx + 1, line);
+    
     // Parse: if condition {
     if !line.starts_with("if ") {
-        return Err(ParseError::new("Expected 'if' keyword", Some(line_span)));
+        return Err(ctx.error("Expected 'if' keyword", start_idx, "parse_if_stmt"));
     }
     
     // Find the opening brace
     let brace_pos = line.find('{').ok_or_else(|| {
-        ParseError::new("Expected '{' after if condition", Some(line_span))
+        ctx.error("Expected '{' after if condition", start_idx, "parse_if_stmt")
     })?;
     
     let condition_str = line[3..brace_pos].trim();
+    trace_parse!("  if condition: '{}'", condition_str);
     let condition = parse_expr(condition_str, Some(line_span))?;
     
-    // Parse then branch (block starting at brace_pos)
-    let then_start = if line[brace_pos + 1..].trim().is_empty() {
-        start_idx + 1
-    } else {
-        start_idx
-    };
+    // Parse then branch - pass the line with '{' to parse_block
+    // so it can correctly initialize brace_count
+    let then_start = start_idx;
+    trace_parse!("  if then_start: line {}", then_start + 1);
     
     let (then_branch, after_then) = parse_block(lines, then_start, ctx)?;
+    trace_parse!("  if then branch: {} statements, after_then: line {}", then_branch.len(), after_then + 1);
     
     // Check for else
     let mut else_branch = Vec::new();
@@ -1329,27 +1556,28 @@ fn parse_if_stmt(
     
     if after_then < lines.len() {
         let else_line = lines[after_then].trim();
+        trace_parse!("  checking for else at line {}: '{}'", after_then + 1, else_line);
+        
         if else_line.starts_with("else") {
-            if else_line == "else" || else_line == "else {" {
-                // Parse else block
-                let else_start = if else_line == "else" {
-                    after_then + 1
-                } else {
-                    after_then
-                };
-                let (else_body, after_else) = parse_block(lines, else_start, ctx)?;
+            if else_line == "else" || else_line == "else {" || else_line.starts_with("else {") {
+                // Parse else block - pass the line with "else {" to parse_block
+                trace_parse!("  -> found else block");
+                let (else_body, after_else) = parse_block(lines, after_then, ctx)?;
                 else_branch = else_body;
                 next_line = after_else;
+                trace_parse!("  -> else branch: {} statements, next_line: {}", else_branch.len(), next_line + 1);
             } else {
                 // else with condition on same line (not supported in v0.8)
-                return Err(ParseError::new(
+                return Err(ctx.error(
                     "else if not supported in v0.8",
-                    Some(ctx.full_line_span(after_then)),
+                    after_then,
+                    "parse_if_stmt",
                 ));
             }
         }
     }
     
+    trace_parse!("  parse_if_stmt complete, next_line: {}", next_line + 1);
     Ok((
         Stmt::If {
             condition,
@@ -1438,19 +1666,22 @@ fn parse_match_stmt(
     let line = lines[start_idx].trim();
     let line_span = ctx.full_line_span(start_idx);
     
+    trace_parse!("parse_match_stmt starting at line {}: '{}'", start_idx + 1, line);
+    
     // Parse: match expr {
     if !line.starts_with("match ") {
-        return Err(ParseError::new("Expected 'match' keyword", Some(line_span)));
+        return Err(ctx.error("Expected 'match' keyword", start_idx, "parse_match_stmt"));
     }
     
     let after_match = &line[6..];
     
     // Find opening brace
     let brace_pos = after_match.find('{').ok_or_else(|| {
-        ParseError::new("Expected '{' after match expression", Some(line_span))
+        ctx.error("Expected '{' after match expression", start_idx, "parse_match_stmt")
     })?;
     
     let scrutinee_str = after_match[..brace_pos].trim();
+    trace_parse!("  match scrutinee: '{}'", scrutinee_str);
     let scrutinee = parse_expr(scrutinee_str, Some(line_span))?;
     
     // Parse match arms
@@ -1461,7 +1692,10 @@ fn parse_match_stmt(
         start_idx
     };
     
+    trace_parse!("  parsing match arms starting at line {}", i + 1);
+    
     // Find the closing brace of the match
+    // We start with brace_count = 1 because we've seen the opening brace of the match
     let mut brace_count = 1;
     let match_start = i;
     
@@ -1473,18 +1707,15 @@ fn parse_match_stmt(
             continue;
         }
         
-        if arm_line == "}" {
-            brace_count -= 1;
-            if brace_count == 0 {
-                i += 1;
-                break;
-            }
-            i += 1;
-            continue;
-        }
+        trace_parse!("  match line {}: '{}' (brace_count={})", i + 1, arm_line, brace_count);
         
-        if arm_line.ends_with('{') {
-            brace_count += 1;
+        // Check for closing brace of the match statement itself
+        if arm_line == "}" && brace_count == 1 {
+            // This is the closing brace of the match statement
+            trace_parse!("  -> found closing brace of match statement");
+            brace_count = 0;
+            i += 1;
+            break;
         }
         
         // Parse arm: pattern => { body }
@@ -1493,51 +1724,75 @@ fn parse_match_stmt(
             let pattern_str = arm_line[..arrow_pos].trim();
             let after_arrow = arm_line[arrow_pos + 2..].trim();
             
+            trace_parse!("  -> match arm pattern: '{}', after_arrow: '{}'", pattern_str, after_arrow);
+            
             // Parse pattern
             let pattern = if pattern_str == "_" {
                 MatchPattern::Wildcard
             } else {
                 // Try parsing as integer literal
                 let int_val = pattern_str.parse::<i64>().map_err(|_| {
-                    ParseError::new(
-                        format!("Match pattern must be integer literal or '_': {}", pattern_str),
-                        Some(ctx.full_line_span(i)),
+                    ctx.error(
+                        format!("Match pattern must be integer literal or '_': '{}'", pattern_str),
+                        i,
+                        "parse_match_stmt",
                     )
                 })?;
                 MatchPattern::Literal(int_val)
             };
             
             // Parse body block
-            let body_start = if after_arrow == "{" || after_arrow.is_empty() {
-                if after_arrow == "{" {
-                    i
-                } else {
+            let body_start = if after_arrow == "{" || after_arrow.starts_with("{") {
+                // Body starts on same line: "pattern => {"
+                trace_parse!("  -> arm body starts on same line (line {})", i + 1);
+                i
+            } else if after_arrow.is_empty() {
+                // Body starts on next line - need to check if next line has opening brace
+                if i + 1 < lines.len() && lines[i + 1].trim().starts_with('{') {
+                    trace_parse!("  -> arm body starts on next line (line {})", i + 2);
                     i + 1
+                } else {
+                    return Err(ctx.error(
+                        format!("Expected '{{' after match arm pattern, but got: '{}'", 
+                            if i + 1 < lines.len() { lines[i + 1].trim() } else { "<EOF>" }),
+                        i,
+                        "parse_match_stmt",
+                    ));
                 }
             } else {
                 // Body starts on same line after =>
-                return Err(ParseError::new(
-                    "Match arm body must start on new line",
-                    Some(ctx.full_line_span(i)),
+                return Err(ctx.error(
+                    format!("Match arm body must be '{{' or on new line, got: '{}'", after_arrow),
+                    i,
+                    "parse_match_stmt",
                 ));
             };
             
+            trace_parse!("  -> calling parse_block for arm body at line {}", body_start + 1);
             let (body, after_body) = parse_block(lines, body_start, ctx)?;
+            trace_parse!("  -> arm body parsed, {} statements, next line: {}", body.len(), after_body + 1);
             
             arms.push(MatchArm { pattern, body });
             i = after_body;
         } else {
-            i += 1;
+            // Unexpected line - might be a syntax error
+            return Err(ctx.error(
+                format!("Unexpected token in match statement: '{}'. Expected pattern => {{ body }} or '}}'", arm_line),
+                i,
+                "parse_match_stmt",
+            ));
         }
     }
     
     if brace_count > 0 {
-        return Err(ParseError::new(
-            "Unclosed match statement",
-            Some(ctx.full_line_span(match_start)),
+        return Err(ctx.error(
+            format!("Unclosed match statement (started at line {})", match_start + 1),
+            match_start,
+            "parse_match_stmt",
         ));
     }
     
+    trace_parse!("  parse_match_stmt complete, {} arms, ended at line {}", arms.len(), i + 1);
     Ok((
         Stmt::Match {
             scrutinee,
@@ -1556,17 +1811,23 @@ fn parse_stmt(
     let line = lines[start_idx].trim();
     let line_span = ctx.full_line_span(start_idx);
     
+    trace_parse!("parse_stmt line {}: '{}'", start_idx + 1, line);
+    
     // Remove semicolon if present (for return statements)
     let line_no_semi = line.strip_suffix(';').unwrap_or(line).trim();
     
     // v0.8: Parse control flow statements
     if line_no_semi.starts_with("if ") {
+        trace_parse!("  -> if statement");
         return parse_if_stmt(lines, start_idx, ctx);
     } else if line_no_semi.starts_with("for ") {
+        trace_parse!("  -> for loop");
         return parse_for_stmt(lines, start_idx, ctx);
     } else if line_no_semi.starts_with("match ") {
+        trace_parse!("  -> match statement");
         return parse_match_stmt(lines, start_idx, ctx);
     } else if line_no_semi.starts_with("let ") {
+        trace_parse!("  -> let declaration");
         let let_decl = parse_let(line_no_semi, Some(line_span))?;
         Ok((
             Stmt::Let {
@@ -1576,24 +1837,30 @@ fn parse_stmt(
             start_idx + 1,
         ))
     } else if line_no_semi.starts_with("return ") {
+        trace_parse!("  -> return statement");
         let expr_str = line_no_semi.strip_prefix("return ").ok_or_else(|| {
-            ParseError::new("Expected 'return' keyword", Some(line_span))
+            ctx.error_simple("Expected 'return' keyword", start_idx)
         })?;
         let expr = parse_expr(expr_str.trim(), Some(line_span))?;
         Ok((Stmt::Return(expr), start_idx + 1))
     } else if line_no_semi.starts_with("particle ") {
+        trace_parse!("  -> particle declaration");
         let particle = parse_particle(line_no_semi, Some(line_span))?;
         Ok((Stmt::ParticleDecl(particle), start_idx + 1))
     } else if line_no_semi.starts_with("force ") && !line_no_semi.contains("push") {
+        trace_parse!("  -> force declaration");
         let force = parse_force(line_no_semi, Some(line_span))?;
         Ok((Stmt::ForceDecl(force), start_idx + 1))
     } else if line_no_semi.starts_with("detect ") {
+        trace_parse!("  -> detect declaration");
         let detector = parse_detector(line_no_semi, Some(line_span))?;
         Ok((Stmt::DetectorDecl(detector), start_idx + 1))
     } else if line_no_semi.starts_with("well ") {
+        trace_parse!("  -> well declaration");
         let well = parse_well(line_no_semi, Some(line_span))?;
         Ok((Stmt::WellDecl(well), start_idx + 1))
     } else if line_no_semi.starts_with("loop ") {
+        trace_parse!("  -> loop declaration");
         let (loop_decl, next_line) = parse_loop(lines, start_idx, ctx)?;
         Ok((Stmt::LoopDecl(loop_decl), next_line))
     } else {
@@ -1601,11 +1868,13 @@ fn parse_stmt(
         if let Some(paren_pos) = line_no_semi.find('(') {
             let func_name = line_no_semi[..paren_pos].trim();
             if is_valid_identifier(func_name) {
+                trace_parse!("  -> function call: {}", func_name);
                 let rest = &line_no_semi[paren_pos..];
                 let paren_end = rest.find(')').ok_or_else(|| {
-                    ParseError::new(
-                        format!("Expected ')' in function call: {}", line),
-                        Some(line_span),
+                    ctx.error(
+                        format!("Expected ')' in function call"),
+                        start_idx,
+                        "parse_stmt",
                     )
                 })?;
                 
@@ -1629,9 +1898,11 @@ fn parse_stmt(
             }
         }
         
-        Err(ParseError::new(
-            format!("Invalid statement: {}", line),
-            Some(line_span),
+        trace_parse!("  -> FAILED: no valid statement pattern matched");
+        Err(ctx.error(
+            format!("Invalid statement: '{}'", line),
+            start_idx,
+            "parse_stmt",
         ))
     }
 }

@@ -360,6 +360,14 @@ pub fn check_expr(expr: &Expr, env_lets: &HashMap<String, &LetDecl>) -> Diagnost
                 diagnostics.extend(arg_diagnostics.into());
             }
         }
+        Expr::UserCall { name: _, args } => {
+            // User-defined function calls are validated during function execution
+            // Here we just check the arguments for valid expressions
+            for arg in args {
+                let arg_diagnostics = check_expr(arg, env_lets);
+                diagnostics.extend(arg_diagnostics.into());
+            }
+        }
     }
 
     diagnostics

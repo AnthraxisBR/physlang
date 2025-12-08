@@ -17,7 +17,7 @@ pub use eval::{
     FunctionEvalContext,
 };
 pub use functions::execute_functions;
-pub use parser::parse_program;
+pub use parser::{parse_program, ParseError};
 pub use runtime::{
     build_simulation_context, build_simulation_context_from_source, get_particle_states,
     run_program, step_simulation, DetectorResult, ParticleState, SimulationContext,

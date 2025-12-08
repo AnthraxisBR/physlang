@@ -237,6 +237,16 @@ pub fn eval_expr_with_function_ctx(
                 }
             }
         }
+        
+        Expr::UserCall { name, args: _ } => {
+            // User-defined function calls in expressions are not directly evaluated here.
+            // They are executed during function execution phase which has access to function definitions.
+            // This error indicates the function call was not resolved during function execution.
+            Err(EvalError::InvalidArgs(
+                format!("User-defined function '{}' cannot be called in this context. \
+                        User-defined functions are executed during world-building phase.", name)
+            ))
+        }
     }
 }
 

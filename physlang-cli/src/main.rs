@@ -2,7 +2,7 @@ mod vel_app;
 
 use clap::{Parser, Subcommand};
 use physlang_core::{
-    analyze_program, parse_program, run_program, Diagnostic, DiagnosticSeverity,
+    analyze_program, parse_program, Diagnostic, DiagnosticSeverity, ParseError,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -100,7 +100,26 @@ fn main() {
 
 fn run_file(file: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(file)?;
-    let result = run_program(&source)?;
+    
+    // First parse the program to get better error messages
+    let program = match parse_program(&source) {
+        Ok(program) => program,
+        Err(parse_error) => {
+            // Print detailed parse error
+            eprintln!("{}", parse_error.format_detailed());
+            
+            // Also print as a diagnostic with source location
+            let diagnostic = Diagnostic::error(
+                format!("{}", parse_error),
+                parse_error.span(),
+            );
+            print_diagnostics(&source, &[diagnostic]);
+            return Err(Box::new(parse_error));
+        }
+    };
+    
+    // Run the program
+    let result = physlang_core::run_program(&source)?;
 
     // Print detector results
     for detector in result.detectors {
