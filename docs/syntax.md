@@ -11,7 +11,9 @@ Program         ::= (LetDecl | FunctionDecl | TopLevelCall)*
 
 LetDecl         ::= "let" Ident "=" Expr ";" ;
 
-FunctionDecl    ::= "fn" Ident "(" ParamList? ")" "{" Stmt* "}" ;
+FunctionDecl    ::= "fn" Ident "(" ParamList? ")" EffectAnnot? "{" Stmt* "}" ;
+
+EffectAnnot     ::= "world" ;  // v0.9: effect annotation for world-building functions
 
 ParamList       ::= Ident ("," Ident)* ;
 
@@ -26,7 +28,21 @@ Stmt            ::= LetDecl
                   | WellDecl
                   | LoopDecl
                   | DetectorDecl
-                  | ReturnStmt ;
+                  | ReturnStmt
+                  | IfStmt          // v0.8
+                  | ForStmt         // v0.8
+                  | MatchStmt ;     // v0.8
+
+// v0.8: Language-level control flow
+IfStmt          ::= "if" Expr "{" Stmt* "}" ("else" "{" Stmt* "}")? ;
+
+ForStmt         ::= "for" Ident "in" Expr ".." Expr "{" Stmt* "}" ;
+
+MatchStmt       ::= "match" Expr "{" MatchArm* "}" ;
+
+MatchArm        ::= MatchPattern "=>" "{" Stmt* "}" ;
+
+MatchPattern    ::= Integer | "_" ;
 
 ExprCall        ::= Ident "(" ArgList? ")" ";" ;
 
@@ -81,7 +97,11 @@ ObservableRel   ::= Observable (("<" | ">" | "<=" | ">=") Expr) ;
 Observable      ::= "position" "(" Ident ")" "." ("x" | "y")
                   | "distance" "(" Ident "," Ident ")" ;
 
-Expr            ::= ExprAdd ;
+Expr            ::= ExprCompare ;    // v0.8: comparison at lowest precedence
+
+ExprCompare     ::= ExprAdd (CompareOp ExprAdd)? ;  // v0.8
+
+CompareOp       ::= "==" | "!=" | "<" | ">" | "<=" | ">=" ;  // v0.8
 
 ExprAdd         ::= ExprMul (("+" | "-") ExprMul)* ;
 
@@ -92,9 +112,12 @@ ExprUnary       ::= "-" ExprUnary
 
 ExprPrimary     ::= Float
                   | Integer
+                  | String          // v0.8
                   | Ident
                   | FuncCall
                   | "(" Expr ")" ;
+
+String          ::= '"' [^"]* '"' ;  // v0.8: string literals for particle names
 
 FuncCall        ::= FuncName "(" ArgList? ")" ;
 
@@ -402,15 +425,161 @@ make_particle(a, 0.0, 0.0, 1.0);
 make_particle(b, 5.0, 0.0, 1.0);
 ```
 
+### Effect Annotations (v0.9+)
+
+Functions can be annotated with `world` to explicitly mark them as world-building:
+
+**Pure functions** (default, no annotation):
+```phys
+fn compute_distance(x1, y1, x2, y2) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+```
+
+Pure functions:
+- Only compute Scalar, Vec2, or Bool values
+- Cannot contain particle, force, well, loop, or detector declarations
+- Can use `return` to return a value
+
+**World-building functions** (with `world` annotation):
+```phys
+fn make_chain(n, spacing) world {
+    for i in 0..n {
+        let x = i * spacing;
+        particle p at (x, 0.0) mass 1.0
+    }
+}
+```
+
+World functions:
+- May contain world-building statements (particles, forces, wells, loops, detectors)
+- Execute before simulation to construct the physical world
+- Do not return a value
+
+See [Semantics](semantics.md#effect-system) for detailed effect typing rules.
+
+### Language-Level Control Flow (v0.8+)
+
+v0.8 introduces language-level control flow that operates at "compile time" (before simulation), complementing the physics-level control flow (oscillators and wells).
+
+#### If Statement
+
+```phys
+if <condition> {
+    <statements>
+} else {
+    <statements>
+}
+```
+
+Conditionally generates world elements based on a condition. The else branch is optional.
+
+**Example**:
+```phys
+let risk_level = 0.7
+if risk_level > 0.5 {
+    particle high_risk at (0.0, 0.0) mass 2.0
+} else {
+    particle low_risk at (0.0, 0.0) mass 1.0
+}
+```
+
+#### For Loop
+
+```phys
+for <var> in <start>..<end> {
+    <statements>
+}
+```
+
+Iterates from `start` (inclusive) to `end` (exclusive), with `var` available in the loop body.
+
+**Example**:
+```phys
+for i in 0..3 {
+    let x = i * 2.0
+    # Create particles at different positions
+}
+```
+
+#### Match Statement
+
+```phys
+match <expr> {
+    <pattern> => {
+        <statements>
+    }
+    _ => {
+        <statements>
+    }
+}
+```
+
+Matches an expression against integer patterns. The `_` pattern matches anything (wildcard).
+
+**Example**:
+```phys
+let mode = 1
+match mode {
+    0 => {
+        particle default at (0.0, 0.0) mass 1.0
+    }
+    1 => {
+        particle enhanced at (0.0, 0.0) mass 2.0
+    }
+    _ => {
+        particle fallback at (0.0, 0.0) mass 0.5
+    }
+}
+```
+
+### Comparison Operators (v0.8+)
+
+Expressions support comparison operators for use in conditions:
+
+- `==` - Equal
+- `!=` - Not equal
+- `<` - Less than
+- `>` - Greater than
+- `<=` - Less than or equal
+- `>=` - Greater than or equal
+
+**Example**:
+```phys
+if i == 0 {
+    # first iteration
+}
+if x > 5.0 {
+    # x is greater than 5
+}
+```
+
+### String Literals (v0.8+)
+
+String literals are used for dynamic particle names in function calls:
+
+```phys
+fn make_particle(name, x, y, m) {
+    particle name at (x, y) mass m
+}
+
+make_particle("particle_a", 0.0, 0.0, 1.0)
+force spring("particle_a", "particle_b") k = 2.0 rest = 3.0
+```
+
 ### Reserved Words
 
 The following are reserved keywords and cannot be used as identifiers:
 - `particle`, `force`, `gravity`, `spring`, `push`
 - `simulate`, `detect`, `position`, `distance`
 - `loop`, `for`, `while`, `cycles`, `with`, `frequency`, `damping`, `on`
-- `well`, `if`, `depth`
+- `well`, `if`, `else`, `depth` (v0.8: `else` added)
 - `at`, `mass`, `G`, `k`, `rest`, `magnitude`, `direction`
 - `dt`, `steps`
 - `let`, `fn`, `return` (v0.6+)
 - `sin`, `cos`, `sqrt`, `clamp` (v0.6+)
+- `match`, `in` (v0.8+)
+- `world` (v0.9+)
 

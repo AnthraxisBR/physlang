@@ -6,15 +6,366 @@ This document defines the static and dynamic semantics of PhysLang.
 
 ### Type System
 
-PhysLang uses a minimal type system:
+PhysLang uses a statically-checked type system with four core types, an optional dimensional analysis layer, and effect annotations for functions.
 
-**Types**:
-- `Scalar` (f32) - Floating-point numbers
-- `Vec2` (2D vector) - Position and velocity vectors
-- `ParticleRef` - Identifier bound to a particle declaration
-- `Bool` - Boolean values for condition evaluation
+#### Core Types
 
-**Note**: For simplicity, most types are treated as `Scalar` in the implementation, with vector math handled internally.
+| Type | Description | Representation |
+|------|-------------|----------------|
+| `Scalar` | Floating-point numbers | `f32` |
+| `Vec2` | 2D vectors (position, velocity, direction) | `(f32, f32)` |
+| `Bool` | Boolean values for conditions | `true` / `false` |
+| `ParticleRef` | Reference to a declared particle | Stable identifier |
+
+**Scalar** represents dimensionless or dimensioned numeric quantities. All arithmetic operations on numbers produce Scalars. Scalars are used for masses, constants, distances, coordinates, and time values.
+
+**Vec2** represents two-dimensional vectors. Positions, velocities, and directions are Vec2 values. Component access (`.x`, `.y`) yields a Scalar.
+
+**Bool** represents truth values. Comparison expressions evaluate to Bool. Bools are used in conditions for while-loops, wells, and language-level control flow (`if`, `match`).
+
+**ParticleRef** is a reference type that names a specific particle declaration. ParticleRef values cannot be created dynamically—they are bound to particle declarations at parse time. See [Particle References and Lifetimes](#particle-references-and-lifetimes) for details.
+
+#### Typing Judgments
+
+We use standard notation: $\Gamma \vdash e : \tau$ means "in context $\Gamma$, expression $e$ has type $\tau$."
+
+**Literals**:
+$$\Gamma \vdash n : \text{Scalar} \quad \text{(numeric literals)}$$
+
+**Variables**:
+$$\frac{x : \tau \in \Gamma}{\Gamma \vdash x : \tau}$$
+
+**Arithmetic operations** (for $\oplus \in \{+, -, *, /\}$):
+$$\frac{\Gamma \vdash e_1 : \text{Scalar} \quad \Gamma \vdash e_2 : \text{Scalar}}{\Gamma \vdash e_1 \oplus e_2 : \text{Scalar}}$$
+
+**Unary negation**:
+$$\frac{\Gamma \vdash e : \text{Scalar}}{\Gamma \vdash -e : \text{Scalar}}$$
+
+**Comparison operations** (for $\bowtie \in \{<, >, \leq, \geq, ==, \neq\}$):
+$$\frac{\Gamma \vdash e_1 : \text{Scalar} \quad \Gamma \vdash e_2 : \text{Scalar}}{\Gamma \vdash e_1 \bowtie e_2 : \text{Bool}}$$
+
+**Vector component access**:
+$$\frac{\Gamma \vdash e : \text{Vec2}}{\Gamma \vdash e.x : \text{Scalar}} \quad \frac{\Gamma \vdash e : \text{Vec2}}{\Gamma \vdash e.y : \text{Scalar}}$$
+
+**Built-in functions**:
+$$\frac{\Gamma \vdash e : \text{Scalar}}{\Gamma \vdash \text{sin}(e) : \text{Scalar}} \quad \frac{\Gamma \vdash e : \text{Scalar}}{\Gamma \vdash \text{cos}(e) : \text{Scalar}} \quad \frac{\Gamma \vdash e : \text{Scalar}}{\Gamma \vdash \text{sqrt}(e) : \text{Scalar}}$$
+
+$$\frac{\Gamma \vdash e : \text{Scalar} \quad \Gamma \vdash e_{min} : \text{Scalar} \quad \Gamma \vdash e_{max} : \text{Scalar}}{\Gamma \vdash \text{clamp}(e, e_{min}, e_{max}) : \text{Scalar}}$$
+
+**Observables on particles**:
+$$\frac{\Gamma \vdash p : \text{ParticleRef}}{\Gamma \vdash \text{position}(p) : \text{Vec2}}$$
+
+$$\frac{\Gamma \vdash p_1 : \text{ParticleRef} \quad \Gamma \vdash p_2 : \text{ParticleRef}}{\Gamma \vdash \text{distance}(p_1, p_2) : \text{Scalar}}$$
+
+#### Observable Typing
+
+Observables have the following types:
+
+- `position(a) : Vec2` (internally, v0.2 returns x-coordinate as Scalar)
+- `position(a).x : Scalar`
+- `position(a).y : Scalar`
+- `distance(a, b) : Scalar`
+- `ObservableRel : Bool` (e.g., `position(a).x < 5.0`)
+
+Numeric literals are `Scalar`.
+
+---
+
+### Dimensional Analysis (Units System)
+
+PhysLang provides an **optional static analysis layer** that tracks physical dimensions on Scalar values. This layer runs after basic type checking and warns (or errors) when expressions combine quantities with incompatible physical dimensions.
+
+#### Base Dimensions
+
+The dimensional system tracks the following base dimensions:
+
+| Dimension | Symbol | Examples |
+|-----------|--------|----------|
+| Length | L | positions, distances, rest lengths |
+| Time | T | time step `dt`, oscillator periods |
+| Mass | M | particle masses |
+
+Derived dimensions are expressed as products of base dimensions:
+
+| Derived Dimension | Expression | Examples |
+|-------------------|------------|----------|
+| Velocity | L·T⁻¹ | particle velocities |
+| Acceleration | L·T⁻² | force per mass |
+| Force | M·L·T⁻² | spring force, gravity |
+| Spring constant | M·T⁻² | `k` in springs |
+| Gravitational constant | L³·M⁻¹·T⁻² | `G` in gravity forces |
+| Frequency | T⁻¹ | oscillator frequency |
+| Well depth | M·T⁻² | well strength parameter |
+
+#### Dimension Annotations
+
+Dimensions are inferred from context or can be explicitly annotated in future syntax extensions. Currently, the checker infers dimensions from:
+
+1. **Particle declarations**: `at (x, y)` implies x, y have dimension L
+2. **Particle properties**: `mass m` implies m has dimension M
+3. **Simulation config**: `dt = ...` implies the value has dimension T
+4. **Force parameters**: `G`, `k`, `rest`, etc. have known dimensional signatures
+5. **Observables**: `position(p)` returns L (per component), `distance(a, b)` returns L
+
+#### Dimension Propagation Rules
+
+**Addition/Subtraction**: operands must have identical dimensions:
+$$\text{dim}(e_1 + e_2) = \text{dim}(e_1) = \text{dim}(e_2)$$
+
+**Multiplication**:
+$$\text{dim}(e_1 * e_2) = \text{dim}(e_1) \cdot \text{dim}(e_2)$$
+
+**Division**:
+$$\text{dim}(e_1 / e_2) = \text{dim}(e_1) \cdot \text{dim}(e_2)^{-1}$$
+
+**Dimensionless operations**: `sin`, `cos` require dimensionless arguments and return dimensionless results. `sqrt` returns a value with dimension $\text{dim}(e)^{1/2}$.
+
+**Comparisons**: operands must have identical dimensions (result is Bool, which is dimensionless).
+
+#### Dimension Checker Warnings
+
+The dimension checker **warns** about the following violations:
+
+**Incompatible addition**:
+```phys
+let bad = position(a).x + 3.0;  # ERROR: L + dimensionless
+```
+*Diagnostic*: "Cannot add Length to dimensionless quantity"
+
+**Wrong dimension for dt**:
+```phys
+simulate dt = 5.0 steps = 1000  # OK if 5.0 is Time
+simulate dt = position(a).x steps = 1000  # ERROR: dt must be Time, got Length
+```
+*Diagnostic*: "Time step 'dt' requires dimension T, got L"
+
+**Incompatible force parameters**:
+```phys
+force spring(a, b) k = 2.0 rest = 3.0  # OK
+force spring(a, b) k = 2.0 rest = dt   # WARNING: rest length should be L, got T
+```
+*Diagnostic*: "Spring rest length requires dimension L, got T"
+
+**Meaningless comparisons**:
+```phys
+loop while position(a).x < dt with frequency 1.0 damping 0.0 on a {
+    # ERROR: comparing L < T
+}
+```
+*Diagnostic*: "Cannot compare Length with Time"
+
+#### Dimensionless Scalars
+
+Literal numbers without context are treated as **dimensionless**. Dimensionless values can be:
+- Used directly in trigonometric functions
+- Multiplied with any dimensioned quantity (scaling)
+- Compared only with other dimensionless values
+
+Example of correct usage:
+```phys
+let pi = 3.14159;           # dimensionless
+let angle = pi / 2.0;       # dimensionless
+let scale = 2.0;            # dimensionless
+let offset = scale * 5.0;   # dimensionless * dimensionless = dimensionless
+
+particle a at (offset, 0.0) mass 1.0  # offset used as Length (implicit conversion OK)
+```
+
+#### Enabling Dimensional Analysis
+
+Dimensional analysis is an **opt-in** static check. When enabled:
+- The checker infers dimensions for all Scalar expressions
+- Violations produce warnings (not errors by default)
+- A strict mode can be enabled to treat violations as errors
+
+*Implementation note*: This is a design-time specification. The reference implementation may initially implement a subset of these checks.
+
+---
+
+### Effect System
+
+PhysLang distinguishes between **pure** functions and **world-building** functions based on their effects on the simulation world.
+
+#### Effect Categories
+
+| Effect | Description | Marker |
+|--------|-------------|--------|
+| `pure` | Computes values only; no world modification | (default, no marker) |
+| `world` | May create particles, forces, wells, loops, detectors | `world` keyword |
+
+#### Pure Functions
+
+Pure functions:
+- Only compute Scalar, Vec2, or Bool values
+- Cannot contain particle, force, well, loop, or detector declarations
+- Can call other pure functions
+- Can use `return expr;` to return a value
+- Are safe to call in any expression context
+
+**Syntax**:
+```phys
+fn compute_distance(x1, y1, x2, y2) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+```
+
+**Typing rule for pure functions**:
+$$\frac{\Gamma, x_1:\text{Scalar}, \ldots, x_n:\text{Scalar} \vdash \text{body} : \tau \quad \text{body contains no world-building statements}}{\Gamma \vdash \texttt{fn } f(x_1, \ldots, x_n) \{ \text{body} \} : (\text{Scalar}^n \to \tau, \text{pure})}$$
+
+#### World-Building Functions
+
+World-building functions:
+- May contain particle, force, well, loop, or detector declarations
+- Execute before simulation to construct the physical world
+- Do not return a value (conceptually return `unit`)
+- Can only be called at the top level or from other world-building functions
+- Cannot be called from within pure expression evaluation
+
+**Syntax** (with `world` marker):
+```phys
+fn make_chain(n, spacing) world {
+    for i in 0..n {
+        let x = i * spacing;
+        particle p at (x, 0.0) mass 1.0
+    }
+}
+```
+
+**Typing rule for world functions**:
+$$\frac{\Gamma, x_1:\text{Scalar}, \ldots, x_n:\text{Scalar} \vdash \text{body ok}}{\Gamma \vdash \texttt{fn } f(x_1, \ldots, x_n) \texttt{ world } \{ \text{body} \} : (\text{Scalar}^n \to \text{unit}, \text{world})}$$
+
+#### Effect Checking Rules
+
+The compiler enforces the following effect constraints:
+
+1. **Pure functions cannot contain world-building statements**:
+   ```phys
+   fn bad_pure(x) {
+       particle p at (x, 0.0) mass 1.0  # ERROR: world-building in pure function
+       return x;
+   }
+   ```
+   *Error*: "Cannot declare particle inside pure function; add 'world' marker"
+
+2. **Pure functions cannot call world functions**:
+   ```phys
+   fn setup() world {
+       particle a at (0.0, 0.0) mass 1.0
+   }
+   
+   fn compute(x) {
+       setup();  # ERROR: calling world function from pure context
+       return x * 2.0;
+   }
+   ```
+   *Error*: "Cannot call world function 'setup' from pure function 'compute'"
+
+3. **World functions cannot be called in expression position**:
+   ```phys
+   fn setup() world {
+       particle a at (0.0, 0.0) mass 1.0
+   }
+   
+   let x = setup();  # ERROR: world function has no return value
+   ```
+   *Error*: "World function 'setup' does not return a value"
+
+4. **World functions can call pure functions**:
+   ```phys
+   fn circle_x(i, n, r) {
+       return r * cos(2.0 * 3.14159 * i / n);
+   }
+   
+   fn make_ring(n, r) world {
+       for i in 0..n {
+           let x = circle_x(i, n, r);  # OK: pure call from world function
+           particle p at (x, 0.0) mass 1.0
+       }
+   }
+   ```
+
+#### Backward Compatibility
+
+For backward compatibility with pre-v0.9 code, functions without explicit effect markers are classified as follows:
+- If the function body contains any world-building statement → implicitly `world`
+- Otherwise → implicitly `pure`
+
+The compiler may emit a warning for implicit world functions, encouraging explicit `world` annotation.
+
+---
+
+### Particle References and Lifetimes
+
+#### ParticleRef Semantics
+
+A `ParticleRef` is a **stable identifier** that names a particle declaration. Unlike pointers in imperative languages:
+
+- ParticleRef values are **not** memory addresses
+- ParticleRef values **cannot** become invalid or dangling
+- ParticleRef values are **immutable** identifiers
+
+#### Obtaining ParticleRef Values
+
+ParticleRef values are obtained from:
+
+1. **Particle declarations**: The identifier in `particle name at ...` creates a ParticleRef binding
+   ```phys
+   particle a at (0.0, 0.0) mass 1.0  # 'a' is now a ParticleRef
+   ```
+
+2. **Function parameters** (when used in world-building contexts):
+   ```phys
+   fn connect(p1, p2, k) world {
+       force spring(p1, p2) k = k rest = 1.0  # p1, p2 are ParticleRef
+   }
+   ```
+
+3. **String literals** (v0.8+) can be used as particle names in certain contexts, resolved to ParticleRef at elaboration time.
+
+#### ParticleRef Usage
+
+ParticleRef values can be used in:
+
+- **Force declarations**: `force gravity(a, b) ...`, `force spring(a, b) ...`
+- **Well declarations**: `well w on a if ...`
+- **Loop declarations**: `loop ... on a { ... }`
+- **Observable expressions**: `position(a)`, `distance(a, b)`
+- **Detector declarations**: `detect d = position(a)`
+- **Function arguments**: Both pure and world functions can accept ParticleRef parameters
+
+#### Static Particle Model
+
+In the current version of PhysLang:
+
+1. **No dynamic creation**: Particles cannot be created during simulation. All particles are declared before simulation begins.
+
+2. **No destruction**: Particles exist for the entire duration of the simulation. There is no mechanism to remove particles.
+
+3. **Stable identity**: Each particle has a unique, stable identifier determined at parse time.
+
+4. **No aliasing concerns**: Since ParticleRef values are immutable identifiers (not mutable pointers), there are no aliasing issues.
+
+#### Invariants
+
+The following invariants hold for all well-formed PhysLang programs:
+
+- **Referential integrity**: Every ParticleRef used in forces, wells, loops, detectors, or observables refers to a particle that is declared in the program.
+
+- **Lifetime guarantee**: Every ParticleRef remains valid for the entire execution of the program. There is no possibility of a "dangling reference."
+
+- **Unique naming**: No two particles share the same identifier.
+
+Example demonstrating referential integrity checking:
+```phys
+particle a at (0.0, 0.0) mass 1.0
+
+force gravity(a, b) G = 1.0  # ERROR: 'b' is not declared
+```
+*Error*: "Particle 'b' not found"
+
+---
 
 ### Environments
 
@@ -36,11 +387,15 @@ This environment is built by evaluating all top-level `let` bindings before simu
 
 #### Function Environment (v0.7+)
 
-The function environment $\Gamma_f$ maps identifiers to function declarations:
+The function environment $\Gamma_f$ maps identifiers to function declarations with their effect annotations:
 
-$$\Gamma_f : \text{Ident} \rightarrow \text{FunctionDecl}$$
+$$\Gamma_f : \text{Ident} \rightarrow (\text{FunctionDecl}, \text{Effect})$$
+
+Where $\text{Effect} \in \{\text{pure}, \text{world}\}$.
 
 This environment is built during parsing by collecting all `fn` declarations.
+
+---
 
 ### Well-Formedness Rules
 
@@ -102,17 +457,39 @@ $$\text{particle} \in \text{dom}(\Gamma_p) \land a \in \text{dom}(\Gamma_p) \lan
 
 **Error**: "Particle '`<name>`' not found"
 
-### Observable Typing
+#### 8. Effect Consistency
 
-Observables have the following types:
+Functions marked as pure contain no world-building statements. Functions calling world-building functions are themselves world-building.
 
-- `position(a) : Vec2` (internally, v0.2 returns x-coordinate as Scalar)
-- `position(a).x : Scalar`
-- `position(a).y : Scalar`
-- `distance(a, b) : Scalar`
-- `ObservableRel : Bool` (e.g., `position(a).x < 5.0`)
+**Error**: "Cannot declare particle inside pure function; add 'world' marker"
 
-Numeric literals are `Scalar`.
+#### 9. Return Type Consistency
+
+Pure functions with return statements must return Scalar values. World functions may not have return statements.
+
+**Error**: "World function cannot return a value"
+
+---
+
+### Guaranteed Properties (Invariants)
+
+A well-typed, well-formed PhysLang program satisfies the following invariants:
+
+1. **No free particles**: Every `ParticleRef` in expressions, forces, wells, loops, and detectors corresponds to a declared particle.
+
+2. **No type mismatches**: The static type checker rejects programs where expressions have incompatible types (e.g., adding Vec2 and Scalar directly, or passing the wrong type to a built-in function).
+
+3. **No dangling references**: Every `ParticleRef` remains valid throughout program execution. Particles are never deallocated or destroyed.
+
+4. **Dimensional consistency** (when enabled): The dimensional analysis layer warns or rejects expressions that combine quantities with incompatible physical dimensions (e.g., adding length to time).
+
+5. **Effect soundness**: Pure functions are guaranteed not to modify the world configuration. Only world-building functions (explicitly marked or inferred) can create particles, forces, wells, loops, or detectors.
+
+6. **Deterministic execution**: Given identical source code and inputs, the program produces identical outputs. This follows from the fixed integration scheme and step count.
+
+7. **Termination**: Every PhysLang program terminates after exactly `steps` simulation steps.
+
+---
 
 ## Dynamic Semantics
 
@@ -345,10 +722,18 @@ Variable lookup order (highest to lowest priority):
 
 ### Function Execution Model
 
-Functions are "world-building macros" that execute before simulation:
-- They modify the AST by generating particles, forces, loops, wells, etc.
-- They do NOT execute during simulation
-- They are pure in the sense that they only generate declarations (no side effects during simulation)
+Functions operate in one of two modes based on their effect annotation:
+
+**Pure functions** (`fn f(...) { ... }`):
+- Compute and return Scalar values
+- Cannot generate world-building statements
+- Safe to call in expression contexts
+
+**World-building functions** (`fn f(...) world { ... }`):
+- Execute to generate particles, forces, loops, wells, or detectors
+- Modify the AST by generating declarations
+- Must be called at statement level (not in expressions)
+- Execute before simulation begins
 
 ## Operational Semantics Summary
 
@@ -356,18 +741,19 @@ The execution of a PhysLang program can be summarized as:
 
 1. **Parse** → Build AST and environments ($\Gamma_p$, $\Gamma_f$)
 2. **Validate** → Check well-formedness rules
-3. **Evaluate Global Lets** → Build variable environment $\Gamma_v$ (v0.6+)
-4. **Execute Functions** → Generate world-building statements from function calls (v0.7+)
-5. **Re-validate** → Check well-formedness of generated world
-6. **Build World** → Create initial world state $W(0)$
-7. **Build Loops/Wells** → Create loop and well instances
-8. **Simulate** → For $i = 1..N$:
+3. **Effect check** → Verify pure/world annotations are consistent
+4. **Evaluate Global Lets** → Build variable environment $\Gamma_v$ (v0.6+)
+5. **Execute Functions** → Generate world-building statements from function calls (v0.7+)
+6. **Re-validate** → Check well-formedness of generated world
+7. **Dimension check** (optional) → Verify dimensional consistency
+8. **Build World** → Create initial world state $W(0)$
+9. **Build Loops/Wells** → Create loop and well instances
+10. **Simulate** → For $i = 1..N$:
    - Update loops
    - Apply wells
    - Integrate physics
    - Evaluate conditions
-9. **Detect** → Evaluate detectors on $W(T)$
-10. **Output** → Return detector results
+11. **Detect** → Evaluate detectors on $W(T)$
+12. **Output** → Return detector results
 
 This provides a deterministic, physically-grounded execution model where computation emerges from the evolution of a dynamical system.
-

@@ -5,7 +5,7 @@
 
 use crate::ast::{Expr, FunctionDecl, Program, Stmt};
 use crate::diagnostics::Diagnostic;
-use crate::eval::{eval_expr_with_function_ctx, EvalContext, EvalError, FunctionEvalContext};
+use crate::eval::{eval_expr_with_function_ctx, EvalContext, FunctionEvalContext};
 use std::collections::HashMap;
 
 /// Evaluate an expression that may contain user-defined function calls
@@ -181,6 +181,15 @@ fn execute_single_statement_with_user_calls(
         }
         Stmt::ForceDecl(force) => {
             let mut new_force = force.clone();
+            
+            // Resolve particle names: check if they're string parameters
+            if let Some(string_name) = func_ctx.string_params.get(&force.a) {
+                new_force.a = string_name.clone();
+            }
+            if let Some(string_name) = func_ctx.string_params.get(&force.b) {
+                new_force.b = string_name.clone();
+            }
+            
             match &mut new_force.kind {
                 crate::ast::ForceKind::Gravity { g } => {
                     let g_val = eval_expr_with_user_calls(g, func_ctx, program, function_map)?;

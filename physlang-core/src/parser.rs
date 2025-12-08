@@ -432,8 +432,9 @@ fn parse_force(line: &str, span: Option<Span>) -> Result<ForceDecl, ParseError> 
         ));
     }
     
-    let a = args[0].to_string();
-    let b = args[1].to_string();
+    // Strip quotes from particle names if they're string literals
+    let a = strip_quotes(args[0]);
+    let b = strip_quotes(args[1]);
     
     let rest = &rest[paren_end + 1..].trim();
     
@@ -1302,6 +1303,20 @@ fn is_valid_identifier(s: &str) -> bool {
     
     // Rest must be alphanumeric or underscore
     chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Strip quotes from a string literal, returning the inner content
+/// If not quoted, returns the original string
+fn strip_quotes(s: &str) -> String {
+    let trimmed = s.trim();
+    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        // Remove surrounding quotes
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 // ============================================================================

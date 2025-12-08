@@ -10,7 +10,9 @@ PhysLang is a domain-specific language where program execution is a 2D physics s
 - **Variables** = Particles (mass points) + Scalar variables (v0.6+)
 - **Operations** = Forces between particles
 - **Abstraction** = User-defined functions (v0.7+)
-- **Control-flow** = Oscillators (loops) and potential wells (conditionals)
+- **Control-flow** = Two levels:
+  - **Language-level (v0.8+)**: `if/else`, `for`, `match` - evaluated before simulation
+  - **Physics-level**: Oscillators (loops) and potential wells (conditionals) - evaluated during simulation
 - **Execution** = Time integration of Newtonian equations
 - **Output** = Detectors applied to final state
 
@@ -21,6 +23,10 @@ PhysLang is a domain-specific language where program execution is a 2D physics s
 - **Fixed-step ODE integration**: Uses semi-implicit Euler method
 - **Compile-time evaluation** (v0.6+): Expressions and variables are evaluated before simulation
 - **Macro-like functions** (v0.7+): Functions generate world-building statements before simulation
+- **Two-phase execution** (v0.8+): Language-level control flow (`if`, `for`, `match`) executes before simulation to generate the physical world; physics-level control flow (oscillators, wells) executes during simulation
+- **Static type checking** (v0.9+): Types (Scalar, Vec2, Bool, ParticleRef) are checked at compile time
+- **Effect system** (v0.9+): Functions are classified as pure or world-building
+- **Dimensional analysis** (v0.9+): Optional static checking of physical units consistency
 
 ## Formal Definitions
 
@@ -92,6 +98,46 @@ For a well with threshold $T$ and depth $D$ on observable $x$:
 - This creates a "valley" that attracts the particle toward the threshold
 
 Wells provide a physical mechanism for conditional behavior: particles in the well region (true branch) are pulled toward the threshold, while particles outside (false branch) are not affected.
+
+### Language-Level Control Flow (v0.8+)
+
+PhysLang v0.8 introduces language-level control flow that executes **before simulation**, complementing the physics-level control flow (oscillators and wells) that executes **during simulation**.
+
+#### If/Else Statements
+
+```phys
+if condition {
+    # true branch
+} else {
+    # false branch
+}
+```
+
+Conditions use comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) and evaluate to boolean-like values (0.0 = false, non-zero = true).
+
+#### For Loops
+
+```phys
+for i in 0..n {
+    # body with i available
+}
+```
+
+Iterates from start (inclusive) to end (exclusive). The loop variable is available in the body scope.
+
+#### Match Statements
+
+```phys
+match expr {
+    0 => { # case 0 }
+    1 => { # case 1 }
+    _ => { # default }
+}
+```
+
+Pattern matching on integer values. The wildcard `_` matches any value.
+
+These constructs allow **parametric world generation** - creating different physical systems based on configuration parameters, all resolved before the physics simulation begins.
 
 ### Detectors
 
@@ -173,4 +219,6 @@ However, PhysLang differs:
 - **Visualization**: Real-time rendering of particle motion
 - **GPU acceleration**: Parallel force calculations for large systems
 - **Differentiable physics**: Integration with machine learning
+- **Extended dimensional analysis**: Full algebraic unit inference and user-defined dimensions
+- **Dynamic particles**: Runtime particle creation/destruction (with extended lifetime tracking)
 

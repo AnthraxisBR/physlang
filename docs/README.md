@@ -39,14 +39,16 @@ This documentation aims to be:
 
 ## Version Information
 
-This documentation covers **PhysLang v0.7**, which includes:
+This documentation covers **PhysLang v0.9**, which includes:
 
 - Particles and forces (gravity, spring, push)
-- For-loops and while-loops via oscillators
-- Potential wells as conditionals
+- For-loops and while-loops via oscillators (physics-level control flow)
+- Potential wells as conditionals (physics-level control flow)
 - Position and distance detectors
 - **v0.6: Expressions & Variables** - `let` bindings, arithmetic expressions, built-in functions (`sin`, `cos`, `sqrt`, `clamp`)
 - **v0.7: User-Defined Functions** - Function definitions, local variables, world-building functions, return statements
+- **v0.8: Language-Level Control Flow** - `if/else`, `for` loops with iterators, `match` statements, comparison operators
+- **v0.9: Type System & Effects** - Formal type system, dimensional analysis (units), effect annotations (`world` keyword), ParticleRef lifetime guarantees
 
 See the main [README](../README.md) for version history and planned features.
 

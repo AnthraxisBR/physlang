@@ -2,7 +2,8 @@
 
 **PhysLang** is a domain-specific language where program execution is a 2D physics simulation.
 
-> **Tagline**: "Execution as physics."
+
+> **Tagline**: "Execution as physics, AI at peak."
 
 ## What is PhysLang?
 
@@ -81,15 +82,15 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 ## Features
 
-### Current (v0.7)
+### Current (v0.8)
 
 - ✅ Particle declarations with position and mass
 - ✅ Forces: gravity, spring, push (in loops)
 - ✅ Fixed-step simulation with semi-implicit Euler integration
 - ✅ Detectors: position (x-coordinate), distance
-- ✅ For-loops via oscillators
-- ✅ While-loops via physical conditions
-- ✅ Potential wells as conditionals
+- ✅ For-loops via oscillators (physics-level)
+- ✅ While-loops via physical conditions (physics-level)
+- ✅ Potential wells as conditionals (physics-level)
 - ✅ **Visual Evaluation Loop (VEL)** - Interactive visualization with live editing
 - ✅ **v0.6: Expressions & Variables**
   - `let` bindings for variables
@@ -104,6 +105,12 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
   - Return statements (scalar values)
   - World-building statements inside functions (particles, forces, loops, wells)
   - Nested function calls
+- ✅ **v0.8: Language-Level Control Flow**
+  - `if condition { } else { }` - conditional world generation
+  - `for var in start..end { }` - parametric loops with iterator variables
+  - `match expr { pattern => { } }` - pattern matching on integer values
+  - Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
+  - Proper scoping for loop variables and block-local bindings
 
 ### Planned
 
