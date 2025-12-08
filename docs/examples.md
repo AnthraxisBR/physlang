@@ -300,6 +300,315 @@ After simulation, detectors output risk metrics:
 - Adjust well depths to model different regulatory regimes
 - Vary gravity strength to simulate different market conditions
 
+## Language-Level Control Flow Examples (v0.8+)
+
+PhysLang v0.8 introduces language-level control flow (`if`, `for`, `match`) that executes during the world-building phase, before simulation begins. These constructs enable conditional and iterative generation of world elements.
+
+### 7. Conditional Particle Creation
+
+**File**: `examples/conditional_creation.phys`
+
+**Description**: Demonstrates using `if` to conditionally create different world configurations based on compile-time parameters.
+
+```phys
+# Configuration parameter
+let mode = 1;
+
+# Conditional particle creation
+if mode == 0 {
+    # Simple two-particle system
+    particle a at (0.0, 0.0) mass 1.0
+    particle b at (5.0, 0.0) mass 1.0
+    force spring(a, b) k = 2.0 rest = 3.0
+} else {
+    # Three-particle triangle
+    particle a at (0.0, 0.0) mass 1.0
+    particle b at (5.0, 0.0) mass 1.0
+    particle c at (2.5, 4.33) mass 1.0
+    force spring(a, b) k = 2.0 rest = 5.0
+    force spring(b, c) k = 2.0 rest = 5.0
+    force spring(c, a) k = 2.0 rest = 5.0
+}
+
+simulate dt = 0.01 steps = 5000
+
+detect dist_ab = distance(a, b)
+```
+
+**What it demonstrates**:
+- Compile-time conditional (`if`/`else`)
+- Creating different world topologies based on parameters
+- Only the active branch's declarations exist in final world
+
+**Key concept**: The condition `mode == 1` is evaluated at compile time. Since `mode = 1`, only the triangle configuration is created; the two-particle system never exists.
+
+### 8. Spring Chain Generation with `for`
+
+**File**: `examples/spring_chain.phys`
+
+**Description**: Generates a chain of particles connected by springs using a `for` loop.
+
+```phys
+# Chain parameters
+let n = 5;
+let spacing = 2.0;
+let spring_k = 3.0;
+
+# Generate particle chain
+for i in 0..n {
+    let x = i * spacing;
+    particle p at (x, 0.0) mass 1.0
+}
+
+# Connect adjacent particles with springs
+# Using string-based particle references
+force spring("p_0", "p_1") k = spring_k rest = spacing
+force spring("p_1", "p_2") k = spring_k rest = spacing
+force spring("p_2", "p_3") k = spring_k rest = spacing
+force spring("p_3", "p_4") k = spring_k rest = spacing
+
+simulate dt = 0.01 steps = 10000
+
+detect end_dist = distance("p_0", "p_4")
+```
+
+**What it demonstrates**:
+- Compile-time loop (`for`)
+- Loop unrolling into repeated declarations
+- Name mangling for loop-generated particles (`p_0`, `p_1`, etc.)
+- Parametric world generation
+
+**Key concept**: The `for` loop creates 5 particles in a single construct. The loop is fully unrolled at compile time, producing `p_0` through `p_4`.
+
+### 9. Grid Generation with Nested Loops
+
+**File**: `examples/grid_generation.phys`
+
+**Description**: Creates a 2D grid of particles using nested `for` loops.
+
+```phys
+# Grid parameters
+let rows = 3;
+let cols = 3;
+let spacing = 2.0;
+
+# Generate grid
+for i in 0..rows {
+    for j in 0..cols {
+        let x = i * spacing;
+        let y = j * spacing;
+        particle node at (x, y) mass 1.0
+    }
+}
+
+simulate dt = 0.01 steps = 5000
+
+# Measure grid extent
+detect corner_00 = position("node_0_0")
+detect corner_22 = position("node_2_2")
+```
+
+**What it demonstrates**:
+- Nested `for` loops
+- 2D parametric generation
+- Multi-level name mangling (`node_0_0`, `node_0_1`, etc.)
+
+**Expected result**: A 3×3 grid of 9 particles arranged in a square pattern.
+
+### 10. Scenario Selection with `match`
+
+**File**: `examples/scenario_match.phys`
+
+**Description**: Uses `match` to select between different simulation scenarios.
+
+```phys
+# Scenario selector (change to test different scenarios)
+let scenario = 1;
+
+match scenario {
+    0 => {
+        # Scenario 0: Single particle, no forces
+        particle lone at (0.0, 0.0) mass 1.0
+    }
+    1 => {
+        # Scenario 1: Gravity-bound pair
+        particle sun at (0.0, 0.0) mass 100.0
+        particle planet at (10.0, 0.0) mass 1.0
+        force gravity(sun, planet) G = 5.0
+    }
+    2 => {
+        # Scenario 2: Spring oscillator
+        particle mass at (5.0, 0.0) mass 1.0
+        particle anchor at (0.0, 0.0) mass 1000.0
+        force spring(mass, anchor) k = 10.0 rest = 0.0
+    }
+    _ => {
+        # Default: Two particles with spring
+        particle a at (0.0, 0.0) mass 1.0
+        particle b at (5.0, 0.0) mass 1.0
+        force spring(a, b) k = 2.0 rest = 3.0
+    }
+}
+
+simulate dt = 0.01 steps = 10000
+```
+
+**What it demonstrates**:
+- Pattern matching with `match`
+- Multiple scenario configurations
+- Wildcard pattern (`_`) as default
+- Only matched branch exists in final world
+
+**Key concept**: Change `scenario` to 0, 1, 2, or any other value to generate completely different physical systems from the same source file.
+
+### 11. Conditional Force Configuration
+
+**File**: `examples/conditional_forces.phys`
+
+**Description**: Demonstrates conditional enabling/disabling of forces.
+
+```phys
+# Feature toggles
+let enable_gravity = 1;
+let enable_springs = 1;
+let enable_damping = 0;
+
+# Create particles
+particle a at (0.0, 0.0) mass 1.0
+particle b at (5.0, 0.0) mass 2.0
+particle c at (2.5, 4.0) mass 1.5
+
+# Conditionally add gravity
+if enable_gravity != 0 {
+    force gravity(a, b) G = 0.5
+    force gravity(b, c) G = 0.5
+    force gravity(c, a) G = 0.5
+}
+
+# Conditionally add springs
+if enable_springs != 0 {
+    force spring(a, b) k = 2.0 rest = 5.0
+    force spring(b, c) k = 2.0 rest = 4.0
+    force spring(c, a) k = 2.0 rest = 4.0
+}
+
+# Conditionally add damping wells
+if enable_damping != 0 {
+    well damp_a on a if position(a).x >= -100.0 depth 0.1
+    well damp_b on b if position(b).x >= -100.0 depth 0.1
+    well damp_c on c if position(c).x >= -100.0 depth 0.1
+}
+
+simulate dt = 0.01 steps = 10000
+
+detect dist_ab = distance(a, b)
+detect dist_bc = distance(b, c)
+detect dist_ca = distance(c, a)
+```
+
+**What it demonstrates**:
+- Using boolean-like flags (0 = false, non-zero = true)
+- Modular force configuration
+- Feature toggle pattern
+
+### 12. Loop with Conditional Body
+
+**File**: `examples/loop_conditional.phys`
+
+**Description**: Combines `for` loops with `if` statements for complex generation patterns.
+
+```phys
+let n = 6;
+
+# Generate particles with conditional masses
+for i in 0..n {
+    let x = i * 2.0;
+    
+    if i == 0 {
+        # First particle is heavier (anchor)
+        particle p at (x, 0.0) mass 10.0
+    } else {
+        # Other particles are lighter
+        particle p at (x, 0.0) mass 1.0
+    }
+}
+
+# Add springs between consecutive particles
+force spring("p_0", "p_1") k = 5.0 rest = 2.0
+force spring("p_1", "p_2") k = 5.0 rest = 2.0
+force spring("p_2", "p_3") k = 5.0 rest = 2.0
+force spring("p_3", "p_4") k = 5.0 rest = 2.0
+force spring("p_4", "p_5") k = 5.0 rest = 2.0
+
+simulate dt = 0.01 steps = 10000
+
+detect anchor_pos = position("p_0")
+detect end_pos = position("p_5")
+```
+
+**What it demonstrates**:
+- `if` inside `for` loop
+- Varying particle properties based on position
+- Anchor pattern (heavy first particle)
+
+**Expected result**: The heavy anchor (`p_0`) barely moves while lighter particles oscillate around it.
+
+### 13. World-Building Function with Control Flow
+
+**File**: `examples/function_control_flow.phys`
+
+**Description**: Demonstrates control flow inside a world-building function.
+
+```phys
+# Function to create a ring of particles
+fn make_ring(n, radius, center_x, center_y) world {
+    let pi = 3.14159;
+    
+    for i in 0..n {
+        let angle = 2.0 * pi * i / n;
+        let x = center_x + radius * cos(angle);
+        let y = center_y + radius * sin(angle);
+        particle node at (x, y) mass 1.0
+    }
+}
+
+# Function to connect all particles to center
+fn add_center_gravity(n, g_const) world {
+    particle center at (0.0, 0.0) mass 100.0
+    
+    for i in 0..n {
+        # Note: requires string interpolation for particle names
+        # This is a simplified example
+    }
+}
+
+# Create a ring of 8 particles
+make_ring(8, 5.0, 0.0, 0.0);
+
+# Add central gravity
+particle center at (0.0, 0.0) mass 100.0
+force gravity(center, "node_0") G = 1.0
+force gravity(center, "node_1") G = 1.0
+force gravity(center, "node_2") G = 1.0
+force gravity(center, "node_3") G = 1.0
+force gravity(center, "node_4") G = 1.0
+force gravity(center, "node_5") G = 1.0
+force gravity(center, "node_6") G = 1.0
+force gravity(center, "node_7") G = 1.0
+
+simulate dt = 0.01 steps = 10000
+
+detect node0_pos = position("node_0")
+```
+
+**What it demonstrates**:
+- `for` loop inside `world` function
+- Parametric world-building
+- Using trigonometric functions for layout
+- Combining functions with top-level declarations
+
+---
+
 ## Expressions and Functions Examples (v0.6+)
 
 ### Using Expressions

@@ -462,7 +462,13 @@ See [Semantics](semantics.md#effect-system) for detailed effect typing rules.
 
 ### Language-Level Control Flow (v0.8+)
 
-v0.8 introduces language-level control flow that operates at "compile time" (before simulation), complementing the physics-level control flow (oscillators and wells).
+v0.8 introduces language-level control flow that operates at "compile time" (during the world-building phase, before simulation), complementing the physics-level control flow (oscillators and wells that execute during simulation).
+
+**Key distinction**:
+- **Language-level** (`if`, `for`, `match`): Executes before simulation; generates/skips world declarations
+- **Physics-level** (oscillator loops, wells): Executes during simulation; reacts to particle state
+
+See [Semantics: Language-Level Control Flow](semantics.md#language-level-control-flow-v08) for detailed semantics and expansion rules.
 
 #### If Statement
 
@@ -474,11 +480,15 @@ if <condition> {
 }
 ```
 
-Conditionally generates world elements based on a condition. The else branch is optional.
+Conditionally generates world elements based on a **compile-time** condition. The else branch is optional.
+
+**Restrictions**:
+- Condition must be a pure expression (no `position()`, `distance()`, or other runtime observables)
+- Declarations in inactive branches do not exist in the final world
 
 **Example**:
 ```phys
-let risk_level = 0.7
+let risk_level = 0.7;
 if risk_level > 0.5 {
     particle high_risk at (0.0, 0.0) mass 2.0
 } else {
@@ -494,14 +504,20 @@ for <var> in <start>..<end> {
 }
 ```
 
-Iterates from `start` (inclusive) to `end` (exclusive), with `var` available in the loop body.
+Iterates from `start` (inclusive) to `end` (exclusive), with `var` available in the loop body. The loop is **fully unrolled** at compile time.
+
+**Restrictions**:
+- Bounds must be compile-time integer expressions
+- Iteration count must be finite and known at compile time
+- Particles declared in loops receive mangled names (`p_0`, `p_1`, etc.)
 
 **Example**:
 ```phys
 for i in 0..3 {
-    let x = i * 2.0
-    # Create particles at different positions
+    let x = i * 2.0;
+    particle p at (x, 0.0) mass 1.0
 }
+# Creates: p_0 at (0,0), p_1 at (2,0), p_2 at (4,0)
 ```
 
 #### Match Statement
@@ -517,11 +533,16 @@ match <expr> {
 }
 ```
 
-Matches an expression against integer patterns. The `_` pattern matches anything (wildcard).
+Matches an expression against integer patterns. The `_` pattern matches anything (wildcard). Only the matching branch is expanded.
+
+**Restrictions**:
+- Scrutinee must be a compile-time expression
+- Patterns must be integer literals or wildcard (`_`)
+- Non-exhaustive matches require a wildcard branch
 
 **Example**:
 ```phys
-let mode = 1
+let mode = 1;
 match mode {
     0 => {
         particle default at (0.0, 0.0) mass 1.0

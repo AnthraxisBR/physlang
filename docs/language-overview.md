@@ -103,27 +103,41 @@ Wells provide a physical mechanism for conditional behavior: particles in the we
 
 PhysLang v0.8 introduces language-level control flow that executes **before simulation**, complementing the physics-level control flow (oscillators and wells) that executes **during simulation**.
 
+#### Two-Phase Execution
+
+| Phase | Constructs | When | Purpose |
+|-------|------------|------|---------|
+| **World-Building** | `if`, `for`, `match` | Before simulation | Generate/configure world elements |
+| **Physical Simulation** | Oscillator loops, wells | During simulation | React to particle dynamics |
+
+**Key principle**: Language-level control flow operates on compile-time values (let-bindings, parameters), not runtime values (particle positions, velocities).
+
 #### If/Else Statements
 
 ```phys
 if condition {
-    # true branch
+    # true branch - declarations included if condition is true
 } else {
-    # false branch
+    # false branch - declarations included if condition is false
 }
 ```
 
-Conditions use comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) and evaluate to boolean-like values (0.0 = false, non-zero = true).
+Conditions must be **compile-time pure expressions**. They use comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) and evaluate to Bool.
+
+**Important**: Cannot use `position()`, `distance()`, or other runtime observables in conditions.
 
 #### For Loops
 
 ```phys
 for i in 0..n {
-    # body with i available
+    # body unrolled n times, with i = 0, 1, ..., n-1
 }
 ```
 
-Iterates from start (inclusive) to end (exclusive). The loop variable is available in the body scope.
+The loop is **fully unrolled** at compile time. Bounds must be compile-time integer constants.
+
+- Particles declared inside loops receive indexed names (`p_0`, `p_1`, etc.)
+- Useful for generating grids, chains, and networks
 
 #### Match Statements
 
@@ -135,9 +149,30 @@ match expr {
 }
 ```
 
-Pattern matching on integer values. The wildcard `_` matches any value.
+Pattern matching on compile-time integer values. The wildcard `_` matches any value.
 
-These constructs allow **parametric world generation** - creating different physical systems based on configuration parameters, all resolved before the physics simulation begins.
+Only the matching branch is included in the final world configuration.
+
+#### Parametric World Generation
+
+These constructs enable **parametric world generation**—creating different physical systems based on configuration parameters, all resolved before simulation begins:
+
+```phys
+let n_particles = 10;
+let scenario = 1;
+
+for i in 0..n_particles {
+    particle p at (i * 1.0, 0.0) mass 1.0
+}
+
+match scenario {
+    0 => { /* gravity only */ }
+    1 => { /* springs only */ }
+    _ => { /* both */ }
+}
+```
+
+See [Semantics: Language-Level Control Flow](semantics.md#language-level-control-flow-v08) for formal definitions.
 
 ### Detectors
 

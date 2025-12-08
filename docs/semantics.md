@@ -296,6 +296,471 @@ The compiler may emit a warning for implicit world functions, encouraging explic
 
 ---
 
+### Language-Level Control Flow (v0.8+)
+
+PhysLang provides language-level control flow constructs (`if`, `for`, `match`) that execute during the **world-building phase**, before physical simulation begins. These constructs enable conditional and iterative generation of particles, forces, wells, and other world elements.
+
+#### Two-Phase Execution Model
+
+PhysLang program execution consists of two distinct phases:
+
+| Phase | Name | What Happens | Control Flow |
+|-------|------|--------------|--------------|
+| 1 | **World-Building** | Variable evaluation, function execution, particle/force/well/loop creation | Language-level (`if`, `for`, `match`) |
+| 2 | **Physical Simulation** | Time-stepping, force evaluation, detector measurement | Physics-level (oscillators, wells) |
+
+**Phase 1: World-Building**
+
+1. Evaluate top-level `let` bindings to build variable environment $\Gamma_v$
+2. Evaluate language-level control flow conditions/bounds (pure expressions only)
+3. Expand `if`, `for`, `match` constructs by inlining active branches
+4. Execute world-building function calls
+5. Collect all generated particles, forces, wells, loops, and detectors
+6. Validate the complete world configuration
+
+**Phase 2: Physical Simulation**
+
+1. Initialize world state $W(0)$ from collected particles
+2. For each simulation step:
+   - Update oscillator phases (physics-level loops)
+   - Apply well forces (physics-level conditionals)
+   - Integrate particle motion
+3. Evaluate detectors on final state $W(T)$
+
+**Key invariant**: Language-level control flow executes **entirely in Phase 1**. It cannot observe or react to simulation outcomes (particle positions, velocities, etc.).
+
+#### Compile-Time Conditional (`if`)
+
+The `if` statement conditionally includes or excludes declarations based on a compile-time boolean condition.
+
+**Syntax**:
+```phys
+if <condition> {
+    <statements>
+}
+
+if <condition> {
+    <statements>
+} else {
+    <statements>
+}
+```
+
+**Semantics**:
+
+1. **Condition evaluation**: The condition must be a pure expression that evaluates to `Bool` at compile time
+2. **Branch selection**: 
+   - If condition is `true` → expand the `if` branch
+   - If condition is `false` → expand the `else` branch (if present), otherwise skip
+3. **Declaration merging**: Declarations from the active branch are merged into the world configuration
+4. **Inactive branch elimination**: The inactive branch is discarded; its declarations do not exist in the final world
+
+**Typing rule**:
+$$\frac{\Gamma \vdash e : \text{Bool} \quad \Gamma \vdash S_1 \text{ ok} \quad \Gamma \vdash S_2 \text{ ok}}{\Gamma \vdash \texttt{if } e \{ S_1 \} \texttt{ else } \{ S_2 \} \text{ ok}}$$
+
+**Example: Conditional particle creation**:
+```phys
+let mode = 1;
+
+if mode == 1 {
+    particle heavy at (0.0, 0.0) mass 10.0
+} else {
+    particle light at (0.0, 0.0) mass 1.0
+}
+```
+*Result*: Only `heavy` is created; `light` does not exist.
+
+**Example: Configuration toggles**:
+```phys
+let enable_gravity = 1;
+let enable_damping = 0;
+
+particle a at (0.0, 0.0) mass 1.0
+particle b at (5.0, 0.0) mass 1.0
+
+if enable_gravity != 0 {
+    force gravity(a, b) G = 1.0
+}
+
+if enable_damping != 0 {
+    well damper on a if position(a).x >= 0.0 depth 0.5
+}
+```
+
+**Restrictions**:
+
+1. **Pure conditions only**: The condition cannot depend on runtime values:
+   ```phys
+   # ERROR: position(a) is a runtime observable
+   if position(a).x > 5.0 {
+       particle b at (10.0, 0.0) mass 1.0
+   }
+   ```
+   *Error*: "Condition in 'if' must be a compile-time expression; 'position(a)' is a runtime observable"
+
+2. **No cross-branch references**: Declarations in one branch cannot reference declarations in the other:
+   ```phys
+   if mode == 0 {
+       particle a at (0.0, 0.0) mass 1.0
+   } else {
+       particle b at (5.0, 0.0) mass 1.0
+   }
+   # ERROR if mode != 0: 'a' does not exist
+   force gravity(a, b) G = 1.0
+   ```
+
+#### Compile-Time Loop (`for`)
+
+The `for` loop generates repeated declarations by iterating over an integer range.
+
+**Syntax**:
+```phys
+for <var> in <start>..<end> {
+    <statements>
+}
+```
+
+**Semantics**:
+
+1. **Bound evaluation**: `start` and `end` must evaluate to integer-valued Scalars at compile time
+2. **Range interpretation**: Iteration is from `start` (inclusive) to `end` (exclusive)
+3. **Loop unrolling**: The loop is fully unrolled at compile time, generating one copy of the body per iteration
+4. **Loop variable binding**: The loop variable `var` is bound to the current iteration value (as a Scalar)
+5. **Name mangling**: Particle names declared inside loops receive unique identifiers (see below)
+
+**Typing rules**:
+$$\frac{\Gamma \vdash e_s : \text{Scalar} \quad \Gamma \vdash e_e : \text{Scalar} \quad \text{isInteger}(e_s) \quad \text{isInteger}(e_e)}{\Gamma \vdash (e_s, e_e) : \text{Range}}$$
+
+$$\frac{\Gamma \vdash (e_s, e_e) : \text{Range} \quad \Gamma, i : \text{Scalar} \vdash S \text{ ok}}{\Gamma \vdash \texttt{for } i \texttt{ in } e_s..e_e \{ S \} \text{ ok}}$$
+
+**Example: Particle chain generation**:
+```phys
+for i in 0..5 {
+    let x = i * 2.0;
+    particle p at (x, 0.0) mass 1.0
+}
+```
+*Result*: Creates 5 particles at positions (0,0), (2,0), (4,0), (6,0), (8,0).
+
+**Example: Spring chain with conditional connections**:
+```phys
+for i in 0..5 {
+    let x = i * 1.0;
+    particle p at (x, 0.0) mass 1.0
+    
+    if i > 0 {
+        # Connect to previous particle
+        # Note: Requires indexed particle access (see Name Mangling)
+    }
+}
+```
+
+**Name Mangling for Loop-Generated Particles**:
+
+When particles are declared inside loops, they need unique names. PhysLang uses the following scheme:
+
+1. **Automatic indexing**: If a bare identifier `p` is used, the compiler generates `p_0`, `p_1`, etc.
+2. **Explicit indexing**: Use string interpolation or explicit naming (future syntax extension)
+3. **Reference within loop**: Use the mangled name pattern to reference particles
+
+*Current implementation*: The compiler generates names in the form `<base>_<iteration>`. For example:
+```phys
+for i in 0..3 {
+    particle node at (i * 1.0, 0.0) mass 1.0
+}
+# Generates: node_0, node_1, node_2
+```
+
+**Referencing indexed particles**:
+```phys
+# After loop expansion, reference by generated name
+for i in 0..3 {
+    particle node at (i * 1.0, 0.0) mass 1.0
+}
+
+# Connect adjacent particles (using string-based particle references)
+force spring("node_0", "node_1") k = 2.0 rest = 1.0
+force spring("node_1", "node_2") k = 2.0 rest = 1.0
+```
+
+**Restrictions**:
+
+1. **Finite iteration count**: The iteration count `end - start` must be a finite, known constant:
+   ```phys
+   let n = compute_count();  # OK if compute_count is pure
+   for i in 0..n { ... }     # OK
+   ```
+
+2. **No runtime bounds**: Bounds cannot depend on simulation state:
+   ```phys
+   # ERROR: Cannot use runtime value as loop bound
+   for i in 0..position(a).x { ... }
+   ```
+   *Error*: "Loop bounds must be compile-time constants; 'position(a)' is a runtime observable"
+
+3. **No side-effect accumulation**: Loop iterations are independent; there is no mutable accumulator:
+   ```phys
+   # This does NOT accumulate; each iteration is independent
+   for i in 0..3 {
+       let sum = sum + i;  # ERROR: 'sum' is not defined
+   }
+   ```
+
+4. **Integer bounds**: Bounds must evaluate to integers (or be integer-convertible):
+   ```phys
+   for i in 0..5 { ... }      # OK: integer literals
+   for i in 0..n { ... }      # OK if n is integer-valued
+   for i in 0..3.5 { ... }    # ERROR: non-integer bound
+   ```
+
+#### Compile-Time Pattern Matching (`match`)
+
+The `match` statement selects one branch based on pattern matching against a compile-time value.
+
+**Syntax**:
+```phys
+match <scrutinee> {
+    <pattern1> => { <statements> }
+    <pattern2> => { <statements> }
+    _ => { <statements> }
+}
+```
+
+**Patterns**:
+- **Integer literal**: `0`, `1`, `-5`, etc.
+- **Wildcard**: `_` matches any value (must be last)
+
+**Semantics**:
+
+1. **Scrutinee evaluation**: The scrutinee must be a pure expression evaluated at compile time
+2. **Pattern matching**: Patterns are checked in order; first match wins
+3. **Branch expansion**: Only the matching branch is expanded
+4. **Wildcard requirement**: If patterns are not exhaustive, a wildcard `_` branch is required
+
+**Typing rule**:
+$$\frac{\Gamma \vdash e : \text{Scalar} \quad \forall i: \Gamma \vdash p_i : \text{Scalar} \quad \forall i: \Gamma \vdash S_i \text{ ok}}{\Gamma \vdash \texttt{match } e \{ p_1 \Rightarrow S_1; \ldots; p_n \Rightarrow S_n \} \text{ ok}}$$
+
+**Example: Scenario selection**:
+```phys
+let scenario = 1;
+
+match scenario {
+    0 => {
+        # Default scenario
+        particle a at (0.0, 0.0) mass 1.0
+        particle b at (5.0, 0.0) mass 1.0
+    }
+    1 => {
+        # High-mass scenario
+        particle a at (0.0, 0.0) mass 10.0
+        particle b at (5.0, 0.0) mass 10.0
+    }
+    2 => {
+        # Triangle scenario
+        particle a at (0.0, 0.0) mass 1.0
+        particle b at (5.0, 0.0) mass 1.0
+        particle c at (2.5, 4.33) mass 1.0
+    }
+    _ => {
+        # Fallback
+        particle default at (0.0, 0.0) mass 1.0
+    }
+}
+```
+
+**Example: Mode-based configuration**:
+```phys
+let mode = 2;
+
+match mode {
+    0 => {
+        # No forces
+    }
+    1 => {
+        force gravity(a, b) G = 1.0
+    }
+    _ => {
+        force gravity(a, b) G = 1.0
+        force spring(a, b) k = 2.0 rest = 3.0
+    }
+}
+```
+
+**Restrictions**:
+
+1. **Pure scrutinee**: The scrutinee cannot depend on runtime values
+2. **Integer/boolean patterns only**: Current version supports integer literals and wildcards
+3. **No binding patterns**: Patterns do not bind variables (future extension)
+4. **Exhaustiveness**: Either enumerate all cases or include a wildcard
+
+#### Control Flow Expansion Rules
+
+The compiler expands control flow constructs during the world-building phase according to these rules:
+
+**Expansion Algorithm**:
+
+```
+expand(stmt, env) → list of declarations
+
+expand(if cond { S1 } else { S2 }, env):
+    v = eval(cond, env)
+    if v == true:
+        return expand_all(S1, env)
+    else:
+        return expand_all(S2, env)
+
+expand(for i in start..end { S }, env):
+    decls = []
+    s = eval(start, env)
+    e = eval(end, env)
+    for j in [s, s+1, ..., e-1]:
+        env' = env[i ↦ j]
+        decls.append(expand_all(S, env'))
+    return decls
+
+expand(match scrutinee { p1 => S1; ...; pn => Sn }, env):
+    v = eval(scrutinee, env)
+    for (pi, Si) in [(p1, S1), ..., (pn, Sn)]:
+        if matches(v, pi):
+            return expand_all(Si, env)
+    error("No matching pattern")
+
+expand(particle name at (x, y) mass m, env):
+    x' = eval(x, env)
+    y' = eval(y, env)
+    m' = eval(m, env)
+    name' = mangle(name, env)  # Apply name mangling if in loop
+    return [ParticleDecl(name', x', y', m')]
+
+expand(other_stmt, env):
+    # Similar for forces, wells, loops, detectors
+```
+
+**Expansion Order**:
+
+1. Statements are expanded in **lexical order** (top to bottom)
+2. Control flow expansion is **deterministic**: same input always produces same output
+3. Nested control flow is expanded **inside-out**: inner constructs first
+
+**Example expansion**:
+
+Source:
+```phys
+let n = 3;
+for i in 0..n {
+    if i == 0 {
+        particle origin at (0.0, 0.0) mass 2.0
+    } else {
+        particle node at (i * 1.0, 0.0) mass 1.0
+    }
+}
+```
+
+After expansion:
+```phys
+particle origin at (0.0, 0.0) mass 2.0    # i=0, if branch
+particle node_1 at (1.0, 0.0) mass 1.0    # i=1, else branch
+particle node_2 at (2.0, 0.0) mass 1.0    # i=2, else branch
+```
+
+#### Interaction with Effect Typing
+
+Language-level control flow interacts with the effect system as follows:
+
+**1. Control flow in pure functions**:
+
+Pure functions **can** contain control flow, but only if all branches are also pure:
+```phys
+fn compute_value(mode) {
+    if mode == 0 {
+        return 1.0;
+    } else {
+        return 2.0;
+    }
+}
+```
+*OK*: Both branches return Scalar values; no world-building.
+
+**2. Control flow in world-building functions**:
+
+World-building functions **can** contain control flow with world-building statements:
+```phys
+fn make_grid(rows, cols) world {
+    for i in 0..rows {
+        for j in 0..cols {
+            let x = i * 1.0;
+            let y = j * 1.0;
+            particle p at (x, y) mass 1.0
+        }
+    }
+}
+```
+*OK*: Control flow generates particles; function is `world`.
+
+**3. Pure conditions required**:
+
+All control flow conditions/bounds must be pure expressions:
+```phys
+fn bad_function(p) world {
+    # ERROR: position(p) is runtime, not compile-time
+    if position(p).x > 0.0 {
+        particle q at (0.0, 0.0) mass 1.0
+    }
+}
+```
+*Error*: "Condition must be a compile-time pure expression"
+
+**4. Effect propagation through control flow**:
+
+If any branch of control flow contains world-building statements, the containing function must be `world`:
+```phys
+fn mixed_function(mode) {
+    if mode == 0 {
+        return 1.0;          # pure
+    } else {
+        particle p at (0.0, 0.0) mass 1.0  # world
+    }
+}
+# ERROR: Implicit world function should be marked 'world'
+```
+
+**Summary of effect rules**:
+
+| Context | `if`/`for`/`match` allowed? | Condition/bounds | Body constraints |
+|---------|----------------------------|------------------|------------------|
+| Pure function | Yes | Pure | Pure statements only |
+| World function | Yes | Pure | World or pure statements |
+| Top level | Yes | Pure | World or pure statements |
+| Expression position | No | N/A | N/A |
+
+#### Static Semantics for Control Flow
+
+**Well-formedness rules for control flow**:
+
+**Rule CF-1**: If condition must be Bool
+$$\frac{\Gamma \vdash e : \text{Bool}}{\Gamma \vdash \texttt{if } e \{ \ldots \} \text{ : condition-ok}}$$
+
+**Rule CF-2**: For bounds must be integers
+$$\frac{\Gamma \vdash e_1 : \text{Scalar} \quad \Gamma \vdash e_2 : \text{Scalar} \quad \text{isConstantInteger}(e_1) \quad \text{isConstantInteger}(e_2)}{\Gamma \vdash \texttt{for } i \texttt{ in } e_1..e_2 \{ \ldots \} \text{ : bounds-ok}}$$
+
+**Rule CF-3**: Match scrutinee must match pattern types
+$$\frac{\Gamma \vdash e : \tau \quad \forall i: \Gamma \vdash p_i : \tau}{\Gamma \vdash \texttt{match } e \{ p_i \Rightarrow \ldots \} \text{ : patterns-ok}}$$
+
+**Rule CF-4**: Control flow conditions must be compile-time pure
+$$\frac{\Gamma \vdash e : \tau \quad \text{isPure}(e) \quad \text{noRuntimeObservables}(e)}{\Gamma \vdash e \text{ : compile-time-ok}}$$
+
+**Error messages**:
+
+| Violation | Error Message |
+|-----------|---------------|
+| Non-bool condition | "Expected Bool in 'if' condition, got Scalar" |
+| Non-integer bound | "Loop bounds must be integers; got floating-point value" |
+| Runtime condition | "'position(p)' is a runtime observable; control flow requires compile-time values" |
+| Missing wildcard | "Non-exhaustive match: patterns do not cover all cases; add '_ =>' branch" |
+| Infinite loop | "Loop bound difference exceeds maximum (10000); reduce iteration count" |
+
+---
+
 ### Particle References and Lifetimes
 
 #### ParticleRef Semantics
@@ -739,21 +1204,29 @@ Functions operate in one of two modes based on their effect annotation:
 
 The execution of a PhysLang program can be summarized as:
 
+### Phase 1: World-Building
+
 1. **Parse** → Build AST and environments ($\Gamma_p$, $\Gamma_f$)
 2. **Validate** → Check well-formedness rules
 3. **Effect check** → Verify pure/world annotations are consistent
 4. **Evaluate Global Lets** → Build variable environment $\Gamma_v$ (v0.6+)
-5. **Execute Functions** → Generate world-building statements from function calls (v0.7+)
-6. **Re-validate** → Check well-formedness of generated world
-7. **Dimension check** (optional) → Verify dimensional consistency
-8. **Build World** → Create initial world state $W(0)$
-9. **Build Loops/Wells** → Create loop and well instances
-10. **Simulate** → For $i = 1..N$:
-   - Update loops
-   - Apply wells
-   - Integrate physics
-   - Evaluate conditions
-11. **Detect** → Evaluate detectors on $W(T)$
-12. **Output** → Return detector results
+5. **Expand Control Flow** → Evaluate `if`/`for`/`match` and inline active branches (v0.8+)
+6. **Execute Functions** → Generate world-building statements from function calls (v0.7+)
+7. **Re-validate** → Check well-formedness of generated world
+8. **Dimension check** (optional) → Verify dimensional consistency
+
+### Phase 2: Physical Simulation
+
+9. **Build World** → Create initial world state $W(0)$
+10. **Build Loops/Wells** → Create loop and well instances
+11. **Simulate** → For $i = 1..N$:
+    - Update oscillators (physics-level loops)
+    - Apply wells (physics-level conditionals)
+    - Integrate physics
+    - Evaluate oscillator conditions
+12. **Detect** → Evaluate detectors on $W(T)$
+13. **Output** → Return detector results
 
 This provides a deterministic, physically-grounded execution model where computation emerges from the evolution of a dynamical system.
+
+**Key distinction**: Language-level control flow (`if`, `for`, `match`) runs in Phase 1; physics-level control flow (oscillators, wells) runs in Phase 2.
